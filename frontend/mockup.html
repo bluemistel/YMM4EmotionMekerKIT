@@ -1,0 +1,190 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<title>YMM4 EmotionMaker KIT — 改修後UI</title>
+<style>
+:root{
+ --bg-base:#f2f8f8;--bg-panel:#ffffff;--bg-surface:#eaf3f3;--bg-elev:#e0eded;
+ --bd-dim:#dbe9e9;--bd:#c8dede;--bd-st:#aecccc;
+ --tx-pri:#16302f;--tx-sec:#3a5755;--tx-mut:#5f7d7b;--tx-fnt:#88a3a1;
+ --ac:#1f8a82;--ac-st:#166f68;--ac-soft:#1f8a821a;--ac-ring:#1f8a8255;
+ --sh:0 1px 3px #1f8a8214,0 4px 16px #16302f0d;
+ --joy:#c8920e;--ang:#cc4452;--sad:#3a6fc4;--hap:#2a9d6a;--sur:#8a5fd0;--emb:#cf6f93;
+ --gs:#d2683a;--gg:#2f9a93;
+ --f:'Zen Kaku Gothic New','Hiragino Sans','BIZ UDPGothic',sans-serif;
+ --m:'JetBrains Mono','Consolas',monospace;}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg-base);color:var(--tx-pri);font-family:var(--f);font-size:13px;
+ line-height:1.5;-webkit-font-smoothing:antialiased;padding:0 0 28px}
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:13px 22px;
+ background:var(--bg-panel);border-bottom:1px solid var(--bd-dim)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.05rem;letter-spacing:.03em}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ac)}
+.brand .k{color:var(--ac)}
+.proj{display:flex;align-items:center;gap:12px;color:var(--tx-sec);font-size:.78rem}
+.proj .f{font-family:var(--m);color:var(--tx-pri)}
+.pill{padding:5px 12px;border:1px solid var(--bd);border-radius:7px;background:var(--bg-surface);
+ color:var(--tx-sec);font-size:.76rem;cursor:pointer}
+.stage{max-width:1180px;margin:18px auto;padding:0 18px}
+.cap{font-size:.74rem;color:var(--tx-mut);letter-spacing:.08em;margin:22px 0 9px;font-weight:700}
+/* preload drop */
+.drop{background:var(--bg-panel);border:2px dashed var(--bd-st);border-radius:14px;
+ padding:40px;text-align:center;box-shadow:var(--sh)}
+.drop svg{margin-bottom:12px}
+.drop h3{font-size:1.05rem;font-weight:700;margin-bottom:6px}
+.drop p{color:var(--tx-mut);font-size:.82rem;margin-bottom:18px}
+.row-c{display:flex;gap:10px;justify-content:center;align-items:center}
+.btn{padding:10px 20px;border:0;border-radius:8px;font-family:var(--f);font-weight:700;
+ font-size:.85rem;cursor:pointer;background:var(--ac);color:#fff;box-shadow:0 2px 10px #1f8a8233}
+.inp{background:var(--bg-surface);border:1px solid var(--bd);color:var(--tx-pri);
+ border-radius:8px;padding:9px 13px;font-size:.82rem;font-family:var(--f);width:330px}
+.step{display:flex;gap:8px;justify-content:center;margin-top:18px;font-size:.74rem;color:var(--tx-mut)}
+.step b{color:var(--ac)}.step .on{color:var(--ac);font-weight:700}
+/* workspace */
+.wrap{display:grid;grid-template-columns:38% 62%;gap:15px}
+.col{display:flex;flex-direction:column;gap:14px}
+.panel{background:var(--bg-panel);border:1px solid var(--bd-dim);border-radius:12px;
+ padding:15px;box-shadow:var(--sh)}
+.ttl{display:flex;align-items:center;gap:8px;font-weight:700;font-size:.98rem;
+ letter-spacing:.02em;margin-bottom:12px}
+.ttl .mk{color:var(--ac);font-size:.66rem}
+.ttl .sub{font-weight:500;font-size:.76rem;color:var(--ac);margin-left:4px}
+.char{display:flex;justify-content:space-between;align-items:center;padding:9px 13px;
+ border-radius:8px;border:1px solid var(--bd-dim);background:var(--bg-surface);
+ margin-bottom:7px;font-size:.84rem;cursor:pointer}
+.char.sel{border-color:var(--ac);background:var(--ac-soft);box-shadow:0 0 0 1px var(--ac-ring) inset}
+.char.auto{border-color:var(--ac);border-style:dashed}
+.char .mt{font-size:.7rem;color:var(--tx-mut)}.char .pc{color:var(--hap);font-weight:700}
+.seg{display:flex;gap:4px;background:var(--bg-surface);border:1px solid var(--bd-dim);
+ border-radius:9px;padding:4px;margin-bottom:13px}
+.seg button{flex:1;padding:7px;border:0;border-radius:6px;background:transparent;
+ color:var(--tx-mut);font-family:var(--f);font-size:.82rem;font-weight:600;cursor:pointer}
+.seg button.on{background:var(--ac);color:#fff}
+.mrow{display:flex;align-items:center;gap:10px;padding:5px 0}
+.mrow .ar{width:13px;color:var(--tx-fnt);font-size:.6rem}
+.mrow .em{width:30px;font-weight:700;font-size:.88rem}
+.mrow select{flex:1;background:var(--bg-surface);border:1px solid var(--bd-dim);
+ color:var(--tx-pri);border-radius:6px;padding:6px 9px;font-size:.78rem;font-family:var(--f)}
+.mrow.hit{background:var(--ac-soft);border-radius:8px;padding:7px 8px;box-shadow:0 0 0 1px var(--ac) inset}
+.em.joy{color:var(--joy)}.em.ang{color:var(--ang)}.em.sad{color:var(--sad)}
+.em.hap{color:var(--hap)}.em.sur{color:var(--sur)}.em.emb{color:var(--emb)}.em.def{color:var(--tx-mut)}
+.prev{margin-top:13px;border-top:1px solid var(--bd-dim);padding-top:11px}
+.prev .l{font-size:.7rem;color:var(--tx-mut);letter-spacing:.04em;margin-bottom:8px}
+.thumb{width:118px;height:158px;border:1px solid var(--bd-dim);border-radius:8px;
+ background:var(--bg-surface);display:flex;align-items:center;justify-content:center}
+.filter{width:100%;background:var(--bg-surface);border:1px solid var(--bd);color:var(--tx-pri);
+ border-radius:8px;padding:8px 12px;font-size:.8rem;margin-bottom:10px;font-family:var(--f)}
+.dlg{max-height:226px;overflow:auto;margin:-3px}
+.line{display:flex;align-items:center;gap:11px;padding:8px 11px;border-radius:7px;
+ border-left:3px solid transparent;cursor:pointer;font-size:.83rem;margin:3px}
+.line:hover{background:var(--bg-surface)}
+.line.sel{background:var(--ac-soft);border-left-color:var(--ac);box-shadow:0 0 0 1px var(--ac-ring) inset}
+.line .ts{font-family:var(--m);font-size:.68rem;color:var(--tx-fnt);width:52px}
+.line .nm{color:var(--ac);width:40px;font-weight:600}
+.line .sf{flex:1;color:var(--tx-pri);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bdg{font-size:.64rem;padding:2px 7px;border-radius:4px;font-weight:700;color:#fff}
+.b-joy{background:var(--joy)}.b-sur{background:var(--sur)}.b-sad{background:var(--sad)}.b-hap{background:var(--hap)}
+.src{font-family:var(--m);font-size:.62rem;color:var(--tx-mut)}
+.ovl{font-size:.64rem;color:var(--gs);border:1px solid #d2683a55;padding:2px 7px;border-radius:4px;cursor:pointer}
+.lgd{display:flex;gap:14px;font-size:.7rem;color:var(--tx-sec);margin-bottom:9px}
+.lgd i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.lane{position:relative;height:28px;background:var(--bg-surface);border:1px solid var(--bd-dim);
+ border-radius:6px;margin-bottom:7px;overflow:hidden}
+.segb{position:absolute;top:3px;bottom:3px;border-radius:3px;opacity:.85}
+.ph{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--ac);
+ box-shadow:0 0 0 1px #fff,0 0 6px var(--ac);z-index:5}
+.note{font-size:.68rem;color:var(--tx-fnt);margin-top:7px}
+.foot{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.chk{display:flex;align-items:center;gap:8px;color:var(--tx-sec);font-size:.79rem}
+.btn-w{width:100%;padding:11px;border:0;border-radius:8px;font-family:var(--f);font-weight:700;
+ font-size:.86rem;cursor:pointer;background:var(--ac);color:#fff;box-shadow:0 2px 10px #1f8a8233}
+</style></head><body>
+<header class="hdr">
+ <div class="brand"><span class="dot"></span>YMM4 EmotionMaker <span class="k">KIT</span></div>
+ <div class="proj"><span class="f">suma13.ymmp</span><span>·</span><span>124台詞</span><span>·</span>
+  <span>3キャラ</span><span>·</span><span>30fps</span>
+  <span class="pill">↻ 再読込</span><span class="pill">? 使い方</span></div>
+</header>
+<div class="stage">
+
+ <div class="cap">① 読込前 — ドラッグ&ドロップ / ファイル選択 / パス入力</div>
+ <div class="drop">
+  <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#1f8a82" stroke-width="1.6">
+   <path d="M12 16V4M12 4l-4 4M12 4l4 4"/><path d="M4 16v3a1 1 0 001 1h14a1 1 0 001-1v-3"/></svg>
+  <h3>.ymmp ファイルをここにドロップ</h3>
+  <p>または下のボタン／パス入力から開けます。開くと自動で解析まで進みます。</p>
+  <div class="row-c">
+   <button class="btn">ファイルを選択</button>
+   <input class="inp" placeholder=".ymmp パスを入力（dev用）">
+   <button class="btn" style="background:var(--ac-st)">読込んで解析</button>
+  </div>
+  <div class="step"><span class="on">● 読込</span><b>→</b><span>○ キャラ検出</span><b>→</b><span>○ 感情分析</span></div>
+ </div>
+
+ <div class="cap">② 読込後 — 作業画面（感情分析結果・タイムライン・感情マッピングが常時併用）</div>
+ <div class="wrap">
+  <div class="col">
+   <section class="panel">
+    <div class="ttl"><span class="mk">◆</span>キャラクター設定</div>
+    <div class="char sel"><span>琴葉葵_時雨jun様</span><span class="mt"><span class="pc">26</span> presets · 立ち絵あり</span></div>
+    <div class="char auto"><span>紲星あかり_スマブラ</span><span class="mt"><span class="pc">23</span> presets · 自動検出</span></div>
+    <div class="char"><span>琴葉茜_サクナ</span><span class="mt"><span class="pc">26</span> presets · 立ち絵あり</span></div>
+   </section>
+   <section class="panel">
+    <div class="seg"><button class="on">感情マッピング</button><button>個別設定</button></div>
+    <div class="ttl" style="margin-bottom:10px">琴葉葵 <span class="sub">解決スロット: 喜 → 02-0.笑顔</span></div>
+    <div class="mrow hit"><span class="ar">▶</span><span class="em joy">喜</span><select><option>02-0.笑顔</option></select></div>
+    <div class="mrow"><span class="ar">▶</span><span class="em ang">怒</span><select><option>05.きりっ</option></select></div>
+    <div class="mrow"><span class="ar">▶</span><span class="em sad">哀</span><select><option>02-1.苦笑い</option></select></div>
+    <div class="mrow"><span class="ar">▶</span><span class="em hap">楽</span><select><option>01.通常</option></select></div>
+    <div class="mrow"><span class="ar">▶</span><span class="em sur">驚</span><select><option>03.驚き</option></select></div>
+    <div class="mrow"><span class="ar">▶</span><span class="em emb">照</span><select><option>08.目そらし</option></select></div>
+    <div class="mrow"><span class="ar"></span><span class="em def">常</span><select><option>01.通常</option></select></div>
+    <div class="prev"><div class="l">プレビュー — 02-0.笑顔（このパネル内に内包）</div>
+     <div class="thumb">
+      <svg width="74" height="104" viewBox="0 0 74 104">
+       <rect width="74" height="104" rx="6" fill="#eaf3f3"/>
+       <ellipse cx="37" cy="40" rx="22" ry="24" fill="#fce9d2" stroke="#d8b48c"/>
+       <path d="M16 34c4-14 38-14 42 0" fill="#7a5a3a"/>
+       <path d="M28 38q4-4 8 0M38 38q4-4 8 0" stroke="#3a2a1a" stroke-width="2" fill="none"/>
+       <path d="M30 50q7 6 14 0" stroke="#c8920e" stroke-width="2.4" fill="none"/>
+       <circle cx="26" cy="52" r="3.4" fill="#f3b6b0"/><circle cx="48" cy="52" r="3.4" fill="#f3b6b0"/>
+       <path d="M22 66h30l6 38H16z" fill="#1f8a82"/></svg>
+     </div></div>
+   </section>
+  </div>
+  <div class="col">
+   <section class="panel">
+    <div class="ttl"><span class="mk">◆</span>感情分析結果</div>
+    <input class="filter" placeholder="台詞・キャラ名で検索…">
+    <div class="dlg">
+     <div class="line sel"><span class="ts">00:01:04</span><span class="nm">葵</span>
+      <span class="sf">よし、今日も探索を始めようか。</span><span class="bdg b-joy">喜80</span><span class="src">emotion:joy</span></div>
+     <div class="line"><span class="ts">00:03:18</span><span class="nm">葵</span>
+      <span class="sf">うわっ、なんだこのモンスター…！</span><span class="bdg b-sur">驚62</span><span class="bdg b-sad">哀41</span><span class="ovl">個別設定 →</span></div>
+     <div class="line"><span class="ts">00:05:02</span><span class="nm">あかり</span>
+      <span class="sf">落ち着いて、ゆっくり進めば大丈夫だよ。</span><span class="bdg b-hap">楽55</span><span class="src">emotion:happiness</span></div>
+     <div class="line"><span class="ts">00:07:30</span><span class="nm">葵</span>
+      <span class="sf">そうだね…ありがとう。</span><span class="bdg b-sad">哀38</span><span class="src">compound2:sad+emb</span></div>
+     <div class="line"><span class="ts">00:09:11</span><span class="nm">茜</span>
+      <span class="sf">次のフロアに進むよ！</span><span class="bdg b-joy">喜71</span><span class="src">emotion:joy</span></div>
+    </div>
+   </section>
+   <section class="panel">
+    <div class="ttl"><span class="mk">◆</span>タイムライン<span class="sub">選択台詞 00:01:04 に再生ヘッド</span></div>
+    <div class="lgd"><span><i style="background:var(--sad)"></i>琴葉葵</span>
+     <span><i style="background:var(--hap)"></i>紲星あかり</span><span><i style="background:var(--joy)"></i>琴葉茜</span></div>
+    <div class="lane"><div class="segb" style="left:2%;width:10%;background:var(--joy)"></div>
+     <div class="segb" style="left:14%;width:13%;background:var(--sur)"></div>
+     <div class="segb" style="left:40%;width:9%;background:var(--sad)"></div><div class="ph" style="left:5%"></div></div>
+    <div class="lane"><div class="segb" style="left:28%;width:11%;background:var(--hap)"></div><div class="ph" style="left:5%"></div></div>
+    <div class="lane"><div class="segb" style="left:55%;width:12%;background:var(--joy)"></div><div class="ph" style="left:5%"></div></div>
+    <div class="note">124件の表情アイテム / 18000フレーム</div>
+   </section>
+   <div class="foot">
+    <section class="panel"><div class="ttl"><span class="mk">◆</span>後処理</div>
+     <label class="chk"><input type="checkbox" checked> 感情後処理（勾配・減衰）</label></section>
+    <section class="panel"><div class="ttl"><span class="mk">◆</span>書き出し実行</div>
+     <button class="btn-w">表情アイテムを生成して書き出し</button></section>
+   </div>
+  </div>
+ </div>
+</div></body></html>

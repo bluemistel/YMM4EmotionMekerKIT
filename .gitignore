@@ -1,0 +1,58 @@
+# ===== 依存パッケージ =====
+node_modules/
+frontend/node_modules/
+
+# ===== ビルド成果物 / パッケージ =====
+dist/
+.output/
+frontend/out/
+frontend/.next/
+frontend/next-env.d.ts
+*.tsbuildinfo
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# ===== 機密 / 個人情報（アップロード厳禁） =====
+# ローカルの絶対パスや（設定した場合）LLM API キーを含むためコミットしない
+backend/data/config.yaml
+backend/data/*.yaml
+# 作業状態ファイル（設定一式・API キーを含みうる）
+*.ymmemo
+# 環境変数・認証情報
+.env
+.env.*
+*.pem
+*.key
+secrets.*
+
+# ===== ダウンロード済みモデル（大容量） =====
+backend/models/*
+!backend/models/.gitkeep
+
+# ===== エディタ / OS =====
+.claude/
+.vscode/
+.idea/
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ===== ログ / 一時ファイル =====
+*.log
+*.tmp
+*.bak
+npm-debug.log*
+
+# ===== 別管理の埋め込みリポジトリ（本アプリと無関係） =====
+skills/

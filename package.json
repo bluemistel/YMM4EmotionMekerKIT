@@ -1,0 +1,68 @@
+{
+  "name": "ymm4-emotion-maker-kit",
+  "version": "1.0.1",
+  "description": "YMM4 表情アイテム自動配置ツール",
+  "author": "blazwel <blazwel@gmail.com>",
+  "license": "MIT",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "electron-builder --win",
+    "build": "npm run build:frontend && npm run build:electron",
+    "postinstall": "cd frontend && npm install"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.ymm4.emotion-maker-kit",
+    "productName": "YMM4 EmotionMaker KIT",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*",
+          "!__pycache__/**",
+          "!*.pyc",
+          "!.pytest_cache/**",
+          "!tests/**"
+        ]
+      },
+      {
+        "from": "frontend/out",
+        "to": "frontend-out",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "electron/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "YMM4 EmotionMaker KIT",
+      "installerIcon": "electron/icon.ico",
+      "uninstallerIcon": "electron/icon.ico",
+      "uninstallDisplayName": "YMM4 EmotionMaker KIT"
+    }
+  }
+}
