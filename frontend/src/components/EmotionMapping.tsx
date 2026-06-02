@@ -4,23 +4,25 @@ import { useState, useEffect, useRef } from "react";
 import { api, ResolutionInfo } from "@/lib/api";
 import PresetHoverButton from "./PresetHoverButton";
 
-const EMOTIONS = [
+const ALL_EMOTIONS = [
   { key: "joy", label: "喜", cssVar: "--em-joy" },
   { key: "anger", label: "怒", cssVar: "--em-anger" },
   { key: "sadness", label: "哀", cssVar: "--em-sadness" },
   { key: "happiness", label: "楽", cssVar: "--em-happiness" },
   { key: "surprise", label: "驚き", cssVar: "--em-surprise" },
   { key: "embarrassment", label: "照れ", cssVar: "--em-embarrassment" },
+  { key: "disgust", label: "嫌悪", cssVar: "--em-disgust" },
+  { key: "fear", label: "恐れ", cssVar: "--em-fear" },
+  { key: "exasperation", label: "呆れ", cssVar: "--em-exasperation" },
   { key: "default", label: "通常", cssVar: "--text-muted" },
 ];
-
-const EMOTION_KEYS = EMOTIONS.filter((e) => e.key !== "default").map((e) => e.key);
 
 interface CharacterConfig {
   preset_ini: string;
   tachie_dir: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
+  emotion_intensity_presets: Record<string, Record<string, string>>;
   compound_presets_2: Record<string, string>;
   compound_presets_3: Record<string, string>;
   compound_max_score: number;
@@ -38,6 +40,8 @@ interface Props {
   onSwitchToOverride?: () => void;
   onSaved?: () => void;
   postprocessEnabled?: boolean;
+  /** 無効化された感情キー（マッピング行・複合組合せから除外する）。 */
+  disabledEmotions?: string[];
 }
 
 const HIT_STYLE: React.CSSProperties = {
@@ -95,11 +99,29 @@ export default function EmotionMapping({
   onSwitchToOverride,
   onSaved,
   postprocessEnabled = false,
+  disabledEmotions = [],
 }: Props) {
   const [autoSavedMsg, setAutoSavedMsg] = useState("");
   const [expandedEmotions, setExpandedEmotions] = useState<Set<string>>(new Set());
-  const [gradientOpen, setGradientOpen] = useState(false);
+  // 勾配プリセットの開閉は localStorage に永続化（再マウント/再読込でも保持）。
+  const [gradientOpen, setGradientOpenState] = useState<boolean>(() => {
+    if (typeof window !== "undefined") return localStorage.getItem("ymm4.gradientOpen") === "1";
+    return false;
+  });
+  function setGradientOpen(v: boolean) {
+    setGradientOpenState(v);
+    try {
+      localStorage.setItem("ymm4.gradientOpen", v ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
   const saveTimer = useRef<number | null>(null);
+
+  // 無効ラベルを除いた表示用リスト（複合の組合せ爆発を抑制）。「通常」は常に表示。
+  const disabledSet = new Set(disabledEmotions);
+  const EMOTIONS = ALL_EMOTIONS.filter((e) => e.key === "default" || !disabledSet.has(e.key));
+  const EMOTION_KEYS = EMOTIONS.filter((e) => e.key !== "default").map((e) => e.key);
 
   // Persist a config to the backend (config.yaml). Used by both the manual
   // 保存 button and the debounced auto-save.
@@ -109,6 +131,7 @@ export default function EmotionMapping({
       tachie_dir: cfg.tachie_dir,
       layer_offset: cfg.layer_offset,
       emotion_presets: cfg.emotion_presets,
+      emotion_intensity_presets: cfg.emotion_intensity_presets,
       compound_presets_2: cfg.compound_presets_2,
       compound_presets_3: cfg.compound_presets_3,
       compound_max_score: cfg.compound_max_score,
@@ -151,11 +174,17 @@ export default function EmotionMapping({
   const slot = resolvedSlot?.slot_key || "";
   const isOverridden = resolvedSlot?.source === "override";
   let hitBase: string | null = null;
+  let hitTier: string | null = null; // "weak" | "strong"（中は base 行）
   let hitC2: string | null = null;
   let hitC3: string | null = null;
   let hitGrad: string | null = null;
   if (slot === "default") hitBase = "default";
-  else if (slot.startsWith("emotion:")) hitBase = slot.slice(8);
+  else if (slot.startsWith("emotion:")) {
+    // emotion:{emo} | emotion:{emo}:weak | emotion:{emo}:strong
+    const rest = slot.slice(8).split(":");
+    hitBase = rest[0];
+    hitTier = rest[1] || null;
+  }
   else if (slot.startsWith("compound2:")) hitC2 = slot.slice(10);
   else if (slot.startsWith("compound3:")) hitC3 = slot.slice(10);
   else if (slot.startsWith("gradient_")) {
@@ -167,6 +196,7 @@ export default function EmotionMapping({
   // Keyed on slot only — later manual toggles are respected.
   useEffect(() => {
     const toExpand: string[] = [];
+    if (hitBase && hitTier) toExpand.push(hitBase); // 強度ヒット時は該当感情を展開
     if (hitC2) toExpand.push(hitC2.split("+")[0]);
     if (hitC3) {
       const [e1, e2] = hitC3.split("+");
@@ -187,6 +217,17 @@ export default function EmotionMapping({
       ...config,
       emotion_presets: { ...config.emotion_presets, [emotionKey]: presetName },
     });
+  }
+
+  // 単独感情の強度別（弱/強）プリセット。中は emotion_presets（行本体）。
+  function handleIntensityChange(emotionKey: string, tier: "weak" | "strong", presetName: string) {
+    const tiers = { ...(config.emotion_intensity_presets[emotionKey] || {}) };
+    if (presetName) tiers[tier] = presetName;
+    else delete tiers[tier];
+    const map = { ...config.emotion_intensity_presets };
+    if (Object.keys(tiers).length) map[emotionKey] = tiers;
+    else delete map[emotionKey];
+    commitChange({ ...config, emotion_intensity_presets: map });
   }
 
   function handleCompound2Change(key: string, presetName: string) {
@@ -286,7 +327,8 @@ export default function EmotionMapping({
           const isDefault = em.key === "default";
           const isExpanded = expandedEmotions.has(em.key);
           const otherEmotions = EMOTION_KEYS.filter((k) => k !== em.key);
-          const rowHit = hitBase === em.key;
+          const rowHit = hitBase === em.key && !hitTier; // 中（mid）のときだけ行本体を強調
+          const tiers = config.emotion_intensity_presets[em.key] || {};
 
           return (
             <div key={em.key}>
@@ -322,6 +364,33 @@ export default function EmotionMapping({
 
               {!isDefault && isExpanded && (
                 <div className="animate-fadeIn" style={{ marginLeft: "36px", marginTop: "2px", paddingLeft: "12px", borderLeft: "1px solid var(--border-dim)" }}>
+                  {/* 強度別（弱/強）。中はこの感情の行本体（上）。スコアの大小で切替。 */}
+                  {(["weak", "strong"] as const).map((tier) => {
+                    const tHit = hitBase === em.key && hitTier === tier;
+                    return (
+                      <div
+                        key={tier}
+                        className="flex items-center gap-3"
+                        style={{ padding: "3px 6px", ...(tHit ? HIT_STYLE : {}) }}
+                      >
+                        <span style={{ width: "14px" }} className="flex-shrink-0" />
+                        <span
+                          className="flex-shrink-0"
+                          style={{ width: "56px", fontSize: "0.72rem", fontWeight: 600, color: tier === "strong" ? "var(--em-anger)" : "var(--text-faint)" }}
+                          title={tier === "weak" ? "弱い強度のとき" : "強い強度のとき"}
+                        >
+                          {tier === "weak" ? "弱" : "強"}
+                        </span>
+                        <PresetSelect
+                          value={tiers[tier] || ""}
+                          onChange={(v) => handleIntensityChange(em.key, tier, v)}
+                          presetNames={presetNames}
+                          characterName={characterName}
+                          basePresetName={basePresetName}
+                        />
+                      </div>
+                    );
+                  })}
                   {otherEmotions.map((sub) => {
                     const key2 = `${em.key}+${sub}`;
                     const subLabel = EMOTIONS.find((e) => e.key === sub)?.label || sub;
@@ -397,7 +466,7 @@ export default function EmotionMapping({
       <div>
         <button
           type="button"
-          onClick={() => postprocessEnabled && setGradientOpen((o) => !o)}
+          onClick={() => postprocessEnabled && setGradientOpen(!gradientOpen)}
           className="flex items-center justify-between w-full"
           style={{
             background: "transparent",
@@ -420,7 +489,7 @@ export default function EmotionMapping({
           )}
         </button>
         {postprocessEnabled && gradientOpen && (
-        <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 animate-fadeIn">
+        <div className="grid grid-cols-1 gap-y-1.5 animate-fadeIn">
           {(["sudden", "gradual"] as const).map((gType) =>
             EMOTION_KEYS.map((ek) => {
               const key = `${gType}_${ek}`;

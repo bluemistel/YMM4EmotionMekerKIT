@@ -9,6 +9,7 @@ interface CharacterConfig {
   tachie_dir: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
+  emotion_intensity_presets: Record<string, Record<string, string>>;
   compound_presets_2: Record<string, string>;
   compound_presets_3: Record<string, string>;
   compound_max_score: number;
@@ -27,9 +28,9 @@ interface Props {
   resolvedSlot?: ResolutionInfo | null;
   selectedVoiceIndex: number | null;
   analysisItem: AnalysisItem | null;
-  onOverrideChange?: () => void;
   onSaved?: () => void;
   postprocessEnabled?: boolean;
+  disabledEmotions?: string[];
 }
 
 export default function MappingPanel({
@@ -41,9 +42,9 @@ export default function MappingPanel({
   resolvedSlot,
   selectedVoiceIndex,
   analysisItem,
-  onOverrideChange,
   onSaved,
   postprocessEnabled,
+  disabledEmotions,
 }: Props) {
   function SegBtn({ value, label }: { value: "mapping" | "override"; label: string }) {
     const on = tab === value;
@@ -105,17 +106,10 @@ export default function MappingPanel({
           onSwitchToOverride={() => onTabChange("override")}
           onSaved={onSaved}
           postprocessEnabled={postprocessEnabled}
+          disabledEmotions={disabledEmotions}
         />
       ) : analysisItem && selectedVoiceIndex !== null ? (
-        <VoiceDetailPanel
-          voiceIndex={selectedVoiceIndex}
-          analysisItem={analysisItem}
-          characterName={characterName}
-          presetNames={config.preset_names || []}
-          availableFiles={config.available_files || {}}
-          basePresetName={config.emotion_presets.default}
-          onOverrideChange={onOverrideChange}
-        />
+        <VoiceDetailPanel />
       ) : (
         <p
           style={{

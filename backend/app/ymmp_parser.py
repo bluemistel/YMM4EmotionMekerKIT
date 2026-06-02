@@ -8,6 +8,7 @@ from pathlib import Path
 
 VOICE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.VoiceItem, YukkuriMovieMaker"
 TACHIE_FACE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker"
+TACHIE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.TachieItem, YukkuriMovieMaker"
 
 
 @dataclass
@@ -76,6 +77,40 @@ class YmmpProject:
         voices.sort(key=lambda v: v.frame)
         return voices
 
+    def get_tachie_intervals(self, timeline_index: int = 0) -> dict[str, list[tuple[int, int]]]:
+        """キャラ名 -> 立ち絵(TachieItem)の存在区間 [start, end) のマージ済みリスト。
+
+        表情アイテムは同キャラの立ち絵が同区間に存在しないと意味を成さないため、
+        延長を立ち絵区間にクリップする用途で使う。YMM4 のグループ化された立ち絵も
+        フラットな Items[] に残るため、タイムライン直下の走査で網羅できる。
+        """
+        items = self.get_items(timeline_index)
+        by_char: dict[str, list[tuple[int, int]]] = {}
+        for item in items:
+            if item.get("$type") != TACHIE_ITEM_TYPE:
+                continue
+            name = item.get("CharacterName")
+            if not name:
+                continue
+            frame = item.get("Frame")
+            length = item.get("Length")
+            if frame is None or length is None:
+                continue
+            by_char.setdefault(name, []).append((int(frame), int(frame) + int(length)))
+
+        # 各キャラの区間を昇順マージ（重なり/隣接を結合）。
+        merged: dict[str, list[tuple[int, int]]] = {}
+        for name, intervals in by_char.items():
+            intervals.sort()
+            out: list[tuple[int, int]] = []
+            for start, end in intervals:
+                if out and start <= out[-1][1]:
+                    out[-1] = (out[-1][0], max(out[-1][1], end))
+                else:
+                    out.append((start, end))
+            merged[name] = out
+        return merged
+
     def get_characters(self) -> list[CharacterInfo]:
         characters = []
         for char in self.data.get("Characters", []):
@@ -112,6 +147,29 @@ class YmmpProject:
                 names.append(v.character_name)
         return names
 
+    def remove_face_items(self, character_names: set[str], timeline_index: int = 0) -> int:
+        """指定キャラの既存表情アイテム(TachieFaceItem)をタイムラインから削除する。
+
+        YMM4 は同じ区間に複数の表情アイテムがあっても最下部の1つしか適用しないため、
+        書き出し前に対象キャラの既存表情アイテムを除去してから新しいものを入れることで、
+        重複（古い手動配置や前回の書き出し結果）による誤適用を防ぐ。
+        削除した件数を返す。
+        """
+        if not character_names:
+            return 0
+        tl = self.timelines[timeline_index]
+        items = tl.get("Items", [])
+        kept = [
+            it for it in items
+            if not (
+                it.get("$type") == TACHIE_FACE_ITEM_TYPE
+                and it.get("CharacterName") in character_names
+            )
+        ]
+        removed = len(items) - len(kept)
+        tl["Items"] = kept
+        return removed
+
     def insert_face_items(self, face_items: list[dict], timeline_index: int = 0) -> None:
         items = self.get_items(timeline_index)
         items.extend(face_items)
@@ -134,3 +192,21 @@ class YmmpProject:
         if timeline_index >= len(self.timelines):
             return {}
         return self.timelines[timeline_index].get("VideoInfo", {})
+
+    def get_fps(self, timeline_index: int = 0) -> float:
+        """タイムラインの FPS を返す。YMM4 の VideoInfo は整数キー "FPS"。
+
+        プロジェクトごとに FPS が異なる（例: 30 / 60）ため、秒→フレーム換算に使う。
+        取得できない場合は 60.0 にフォールバックし、必ず正の値を返す。
+        """
+        vi = self.get_video_info(timeline_index)
+        for key in ("FPS", "Fps", "fps"):
+            val = vi.get(key)
+            if val is not None:
+                try:
+                    fps = float(val)
+                    if fps > 0:
+                        return fps
+                except (TypeError, ValueError):
+                    pass
+        return 60.0

@@ -4,6 +4,11 @@ from .config import CharacterConfig
 from .emotion.base import EmotionResult
 from .preset_loader import PresetCollection
 
+# 単独感情の強度しきい値（スコア 0–1。WRIME 整数段階 1.5/2.5 を /3 正規化した中点）。
+# 弱: [emotion_threshold, WEAK_MAX) / 中: [WEAK_MAX, STRONG_MIN) / 強: [STRONG_MIN, 1]
+INTENSITY_WEAK_MAX = 0.5
+INTENSITY_STRONG_MIN = 0.83
+
 
 class ExpressionMapper:
     def __init__(self, char_config: CharacterConfig, presets: PresetCollection):
@@ -42,11 +47,25 @@ class ExpressionMapper:
             if preset and preset in self.presets.presets:
                 return (f"compound2:{key_2}", preset)
 
-        # 3. Single emotion: highest score
+        # 3. Single emotion: highest score（強度別の弱/中/強で分岐）
         best_emotion = ranked[0][0]
-        preset_name = self.char_config.emotion_presets.get(best_emotion, "")
+        best_score = ranked[0][1]
+        if best_score >= INTENSITY_STRONG_MIN:
+            tier = "strong"
+        elif best_score < INTENSITY_WEAK_MAX:
+            tier = "weak"
+        else:
+            tier = "mid"
+        preset_name = ""
+        if tier in ("weak", "strong"):
+            preset_name = self.char_config.emotion_intensity_presets.get(best_emotion, {}).get(tier, "")
+        # 強度別が未設定 or 中 → 既存の単独プリセット（=中/標準）へフォールバック。
+        if not preset_name:
+            preset_name = self.char_config.emotion_presets.get(best_emotion, "")
+            tier = "mid"
         if preset_name and preset_name in self.presets.presets:
-            return (f"emotion:{best_emotion}", preset_name)
+            slot_key = f"emotion:{best_emotion}" if tier == "mid" else f"emotion:{best_emotion}:{tier}"
+            return (slot_key, preset_name)
 
         # 4. Default
         return ("default", self._default_preset())

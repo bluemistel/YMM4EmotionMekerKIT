@@ -88,6 +88,7 @@ export default function PresetHoverButton({
             presetName={presetName}
             basePresetName={basePresetName}
             zoomable
+            viewKey="hover-preview"
           />
         </div>
       )}

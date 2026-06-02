@@ -18,6 +18,7 @@ from .config import (
     auto_load_config,
     auto_save_config,
     generate_template_config,
+    get_data_dir,
     load_config,
     save_config,
 )
@@ -26,8 +27,10 @@ from .face_item_builder import build_tachie_face_item
 from .grouping import (
     DialogueGroup,
     build_group_contexts,
+    build_preceding_contexts,
     detect_groups,
     merge_groups,
+    segment_by_gap,
     split_group,
 )
 from .preset_loader import (
@@ -80,7 +83,15 @@ _state: dict[str, Any] = {
     "placements": {},
     "groups": [],
     "overrides": {},
+    "lexicon": [],
 }
+
+# 起動時にユーザー感情辞書を読み込む（無ければ空）。
+try:
+    from .emotion_lexicon import load_lexicon as _load_lexicon
+    _state["lexicon"] = _load_lexicon()
+except Exception:
+    _state["lexicon"] = []
 
 
 # --- Request / Response models ---
@@ -127,6 +138,10 @@ class OverrideRequest(BaseModel):
     part_overrides: dict[str, str] | None = None
     locked: bool = True
     hold_previous: bool = False
+    # 感情で指定: クリック順（最大3）。感情マッピングで表情を解決する。
+    emotion_labels: list[str] | None = None
+    # 第1感情のみ選択時の強度（"weak"/"mid"/"strong"）。複数選択時は無視。
+    emotion_tier: str | None = None
 
 class WorkstateSaveRequest(BaseModel):
     path: str
@@ -134,6 +149,9 @@ class WorkstateSaveRequest(BaseModel):
 class WorkstateLoadRequest(BaseModel):
     path: str
     timeline_index: int = 0
+
+class LexiconUpdateRequest(BaseModel):
+    entries: list[dict[str, Any]]
 
 
 # --- Project endpoints ---
@@ -452,6 +470,7 @@ def update_character_config(req: UpdateCharacterConfigRequest):
         tachie_dir=char_data.get("tachie_dir", ""),
         layer_offset=char_data.get("layer_offset", 1),
         emotion_presets=char_data.get("emotion_presets", {}),
+        emotion_intensity_presets=char_data.get("emotion_intensity_presets", {}),
         compound_presets_2=cp2,
         compound_presets_3=char_data.get("compound_presets_3", {}),
         compound_max_score=char_data.get("compound_max_score", 0.65),
@@ -495,6 +514,23 @@ def update_settings(req: UpdateSettingsRequest):
         config.settings.gradient_gradual_max_delta = float(s["gradient_gradual_max_delta"])
     if "ymm4_exe_path" in s:
         config.settings.ymm4_exe_path = str(s["ymm4_exe_path"] or "")
+    if "context_turns" in s:
+        config.settings.context_turns = int(s["context_turns"])
+    if "context_speaker_labels" in s:
+        config.settings.context_speaker_labels = bool(s["context_speaker_labels"])
+    if "context_gap_seconds" in s:
+        config.settings.context_gap_seconds = max(0.0, float(s["context_gap_seconds"]))
+    if "reader_weight" in s:
+        config.settings.reader_weight = float(s["reader_weight"])
+    if "disabled_emotions" in s:
+        from .emotion.base import EMOTION_LABELS
+        config.settings.disabled_emotions = [
+            e for e in (s["disabled_emotions"] or []) if e in EMOTION_LABELS
+        ]
+    if "auto_disable_undetected" in s:
+        config.settings.auto_disable_undetected = bool(s["auto_disable_undetected"])
+    if "show_optimizer_on_load" in s:
+        config.settings.show_optimizer_on_load = bool(s["show_optimizer_on_load"])
 
     # 感情分析モデル / LLM API キー。変更時は analyzer キャッシュを破棄して
     # 次回分析で新しいプロバイダ/キーが確実に使われるようにする。
@@ -600,6 +636,8 @@ def set_override(voice_index: int, req: OverrideRequest):
         "part_overrides": req.part_overrides,
         "locked": req.locked,
         "hold_previous": req.hold_previous,
+        "emotion_labels": req.emotion_labels,
+        "emotion_tier": req.emotion_tier,
     }
     return {"status": "set", "voice_index": voice_index}
 
@@ -613,6 +651,24 @@ def delete_override(voice_index: int):
 @app.get("/api/overrides")
 def get_overrides():
     return {"overrides": _state.get("overrides", {})}
+
+
+# --- User emotion lexicon (語句→感情の補正辞書) ---
+
+@app.get("/api/lexicon")
+def get_lexicon():
+    from dataclasses import asdict
+    return {"entries": [asdict(e) for e in _state.get("lexicon", [])]}
+
+
+@app.put("/api/lexicon")
+def update_lexicon(req: LexiconUpdateRequest):
+    from dataclasses import asdict
+    from .emotion_lexicon import entries_from_dicts, save_lexicon
+    entries = entries_from_dicts(req.entries)
+    _state["lexicon"] = entries
+    save_lexicon(entries)
+    return {"status": "saved", "count": len(entries), "entries": [asdict(e) for e in entries]}
 
 
 # --- Work-state (作業状態) save / load ---
@@ -721,33 +777,79 @@ def analyze_emotions(req: AnalyzeRequest):
 
     model_type = req.model or config.settings.emotion_model
     analyzer = _get_or_create_analyzer(model_type, config.settings)
+    # reader/writer ブレンド率は実行ごとに反映（モデル再読込は不要）。
+    if hasattr(analyzer, "reader_weight"):
+        analyzer.reader_weight = config.settings.reader_weight
+    # 自動OFF が ON のときは、検出判定のためにマスク前の出力が必要なので
+    # アナライザのマッピング段マスクを無効化（後段で実効集合をマスクする）。
+    auto_disable = config.settings.auto_disable_undetected
+    manual_disabled = set(config.settings.disabled_emotions or [])
+    if hasattr(analyzer, "disabled_emotions"):
+        analyzer.disabled_emotions = set() if auto_disable else manual_disabled
 
     voices = project.get_voice_items(req.timeline_index)
-    texts = [v.serif for v in voices]
-
-    # Build contexts from groups if available, otherwise use sliding window
     groups: list[DialogueGroup] = _state.get("groups", [])
-    contexts: list[list[str]] = []
 
-    if groups:
-        group_ctx = build_group_contexts(groups)
-        for v in voices:
-            ctx_text = group_ctx.get(v.index, "")
-            contexts.append([ctx_text] if ctx_text else [])
-    else:
-        window = config.settings.context_window
-        for i in range(len(voices)):
-            start = max(0, i - window)
-            ctx = [voices[j].serif for j in range(start, i)]
-            contexts.append(ctx)
+    # 場面/文脈セグメントを算出（無音ギャップ秒 × プロジェクト FPS でフレーム換算）。
+    fps = project.get_fps(req.timeline_index)
+    gap_frames = max(1, round(config.settings.context_gap_seconds * fps))
+    segment_of = segment_by_gap(voices, gap_frames)
+
+    # 話者分離つき・直前Nターンのみの文脈を構築（対象自身/後続/別セグメントは含めない）。
+    speaker_labels = config.settings.context_speaker_labels
+    ctx_map = build_preceding_contexts(
+        voices, config.settings.context_turns, speaker_labels, segment_of=segment_of
+    )
+    contexts = [ctx_map.get(v.index, []) for v in voices]
+
+    def _target_text(v: VoiceItem) -> str:
+        if speaker_labels and v.character_name:
+            return f"{v.character_name}: {v.serif}"
+        return v.serif
+
+    texts = [_target_text(v) for v in voices]
 
     results = analyzer.analyze_batch(texts, contexts)
+
+    # ユーザー感情辞書（語句→感情）の後段補正。
+    lexicon = _state.get("lexicon")
+    if lexicon:
+        from .emotion_lexicon import apply_lexicon
+        results = [
+            apply_lexicon(v.serif, v.character_name, e, lexicon)
+            for v, e in zip(voices, results)
+        ]
+
+    # 実効的な無効ラベル集合を決定する。
+    from .emotion.base import EMOTION_LABELS
+    if auto_disable:
+        # マスク前（このループ前）の出力から検出された感情を判定。
+        threshold = config.settings.emotion_threshold
+        detected: set[str] = set()
+        for e in results:
+            d = e.to_dict()
+            for lab in EMOTION_LABELS:
+                if d.get(lab, 0.0) >= threshold:
+                    detected.add(lab)
+        effective_disabled = set(EMOTION_LABELS) - detected
+        # 実効集合を設定として永続化（チェックUIや書き出しと一致させる）。
+        new_disabled = sorted(effective_disabled)
+        if new_disabled != sorted(config.settings.disabled_emotions or []):
+            config.settings.disabled_emotions = new_disabled
+            auto_save_config(config)
+    else:
+        effective_disabled = manual_disabled
+
+    # 無効ラベルを最終マスク（LLM 経路や辞書由来の残差も確実にゼロ化）。
+    if effective_disabled:
+        for e in results:
+            e.mask(effective_disabled)
 
     post_map = None
     if config.settings.postprocess_enabled:
         from .emotion_postprocess import apply_postprocessing
         raw_map = {v.index: e for v, e in zip(voices, results)}
-        post_map = apply_postprocessing(voices, raw_map, config.settings)
+        post_map = apply_postprocessing(voices, raw_map, config.settings, segment_of=segment_of)
 
     analysis = {}
     for voice, emotion in zip(voices, results):
@@ -787,7 +889,11 @@ def analyze_emotions(req: AnalyzeRequest):
 
     _resolve_for_analysis(config, analysis, _state.get("overrides", {}))
     _state["analysis_results"] = analysis
-    return {"count": len(analysis), "results": analysis}
+    return {
+        "count": len(analysis),
+        "results": analysis,
+        "disabled_emotions": list(config.settings.disabled_emotions or []),
+    }
 
 
 @app.get("/api/analyze/result")
@@ -796,7 +902,10 @@ def get_analysis_result():
     config: ProjectConfig | None = _state["config"]
     if analysis and config is not None:
         _resolve_for_analysis(config, analysis, _state.get("overrides", {}))
-    return {"results": analysis}
+    return {
+        "results": analysis,
+        "disabled_emotions": list(config.settings.disabled_emotions or []) if config else [],
+    }
 
 
 # --- Execute endpoints ---
@@ -859,6 +968,10 @@ def execute(req: ExecuteRequest):
         )
         face_items.append(item)
 
+    # 重複適用を防ぐため、書き出すキャラの既存表情アイテムを除去してから挿入する
+    # （YMM4 は同区間で最下部の1つしか適用しないため、古い手動/前回分が残ると誤適用になる）。
+    target_chars = {p.character_name for p in all_placements}
+    project.remove_face_items(target_chars, req.timeline_index)
     project.insert_face_items(face_items, req.timeline_index)
 
     output_path = req.output_path
@@ -882,6 +995,24 @@ def execute(req: ExecuteRequest):
 
 # --- Helpers ---
 
+def _apply_part_overrides(parts: dict, part_overrides: dict | None, presets) -> None:
+    """パーツ個別変更を resolved parts に上書き適用する（in-place）。
+
+    空文字 = そのパーツを消去（None）。パス区切りを含めば完成パス、素のファイル名なら
+    キャラの立ち絵ディレクトリ（番号付きサブディレクトリ優先）から解決する。
+    """
+    if not part_overrides:
+        return
+    from .preset_loader import resolve_part_path
+    for field_name, val in part_overrides.items():
+        if not val:
+            parts[field_name] = None
+        elif "\\" in val or "/" in val:
+            parts[field_name] = val
+        else:
+            parts[field_name] = resolve_part_path(presets.directory, field_name, val)
+
+
 def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None, threshold: float):
     """Single source of truth for per-voice expression resolution.
 
@@ -890,45 +1021,67 @@ def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None,
     _compute_all_placements exactly so the analyze view and preview/execute
     never drift.
     """
+    part_overrides = (override or {}).get("part_overrides") or {}
+
     if override and override.get("preset_name"):
         preset_name = override["preset_name"]
         parts = presets.resolve_face_params(preset_name)
-        part_overrides = override.get("part_overrides") or {}
-        if part_overrides:
-            from .preset_loader import resolve_part_path
-            for field_name, val in part_overrides.items():
-                if not val:
-                    # Empty value = clear this part
-                    parts[field_name] = None
-                elif "\\" in val or "/" in val:
-                    # Caller passed a full path already
-                    parts[field_name] = val
-                else:
-                    # Caller passed a bare filename — resolve against the
-                    # character's tachie directory (numbered subdir first)
-                    parts[field_name] = resolve_part_path(presets.directory, field_name, val)
+        _apply_part_overrides(parts, part_overrides, presets)
         return ("override", preset_name, "override", parts)
 
     from .emotion.base import EmotionResult
+
+    # 感情で指定（クリック順）: ランク降順スコアの EmotionResult を合成し、
+    # 既存の感情マッピング（単一/複合・強度別）で表情を解決する。
+    if override and override.get("emotion_labels"):
+        labels = [e for e in override["emotion_labels"] if hasattr(EmotionResult(), e)][:3]
+        if labels:
+            synth = EmotionResult()
+            tier = override.get("emotion_tier")
+            if len(labels) == 1 and tier in ("weak", "mid", "strong"):
+                # 第1感情のみ: ユーザー指定の強弱帯にスコアを合成し、resolve_slot の
+                # 強度別分岐（emotion_intensity_presets、未設定は中へフォールバック）に委ねる。
+                from .expression_mapper import INTENSITY_WEAK_MAX, INTENSITY_STRONG_MIN
+                if tier == "weak":
+                    score = max(threshold + 0.01, (threshold + INTENSITY_WEAK_MAX) / 2)
+                elif tier == "strong":
+                    score = min(1.0, INTENSITY_STRONG_MIN + 0.05)
+                else:
+                    score = (INTENSITY_WEAK_MAX + INTENSITY_STRONG_MIN) / 2
+                setattr(synth, labels[0], score)
+            else:
+                # 複合（2つ以上）: 拮抗スコアを合成。強弱は意味を成さないため無視。
+                cap = min(0.6, max(0.05, char_config.compound_max_score))
+                for i, lab in enumerate(labels):
+                    setattr(synth, lab, max(threshold + 0.01, cap - i * 0.05))
+            slot_key, preset_name = mapper.resolve_slot(synth, threshold)
+            parts = mapper.resolve_parts(synth, threshold)
+            _apply_part_overrides(parts, part_overrides, presets)
+            return (slot_key, preset_name, "override", parts)
+
     emotion = EmotionResult(**a["emotion"])
     slot_key, preset_name = mapper.resolve_slot(emotion, threshold)
     source = "mapping"
 
     if a.get("gradient") and a["gradient"].get("type"):
-        from .emotion_postprocess import resolve_gradient_preset
+        from .emotion_postprocess import resolve_gradient_preset, gradient_dominant
         gtype = a["gradient"]["type"]
         gvalues = a["gradient"]["values"]
         gp = resolve_gradient_preset(gvalues, gtype, char_config.gradient_presets)
         if gp and gp in presets.presets:
             preset_name = gp
             source = "gradient"
-            if gvalues:
-                dominant = max(gvalues, key=lambda k: abs(gvalues[k]))
-                slot_key = f"gradient_{gtype}:{dominant}"
-            else:
-                slot_key = f"gradient_{gtype}:"
+            dominant = gradient_dominant(gvalues)
+            slot_key = f"gradient_{gtype}:{dominant}" if dominant else f"gradient_{gtype}:"
 
     parts = mapper.resolve_parts(emotion, threshold)
+
+    # パーツ個別変更のみの上書き: 自動解決結果に最終オーバーレイし override 扱いにする。
+    # （これが無いと書き出しでパーツ変更が破棄され、[個別]バッジも出ない。）
+    if part_overrides:
+        _apply_part_overrides(parts, part_overrides, presets)
+        source = "override"
+
     return (slot_key, preset_name, source, parts)
 
 
@@ -972,7 +1125,7 @@ def _get_or_create_analyzer(model_type: str, settings: Settings):
 
     if model_type == "local":
         from .emotion.bert_analyzer import BertEmotionAnalyzer
-        analyzer = BertEmotionAnalyzer(settings.model_path)
+        analyzer = BertEmotionAnalyzer(settings.model_path, reader_weight=settings.reader_weight)
     elif model_type in ("llm_claude", "llm_openai"):
         from .emotion.llm_analyzer import LlmEmotionAnalyzer
         provider = "claude" if model_type == "llm_claude" else "openai"
@@ -994,6 +1147,9 @@ def _compute_all_placements(
     char_voices: dict[str, list[VoiceItem]] = {}
     for v in voices:
         char_voices.setdefault(v.character_name, []).append(v)
+
+    # 立ち絵(TachieItem)の存在区間。表情アイテムの延長をこの区間にクリップする。
+    tachie_map = project.get_tachie_intervals(timeline_index)
 
     all_placements: list[FacePlacement] = []
     for char_name, char_voice_list in char_voices.items():
@@ -1031,6 +1187,7 @@ def _compute_all_placements(
             extend_expression=config.settings.extend_expression,
             max_gap_extend=config.settings.max_gap_extend,
             hold_indices=hold_indices,
+            valid_intervals=tachie_map.get(char_name),
         )
         all_placements.extend(placements)
 
@@ -1045,6 +1202,13 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "model_path": config.settings.model_path,
             "emotion_threshold": config.settings.emotion_threshold,
             "context_window": config.settings.context_window,
+            "context_turns": config.settings.context_turns,
+            "context_speaker_labels": config.settings.context_speaker_labels,
+            "context_gap_seconds": config.settings.context_gap_seconds,
+            "reader_weight": config.settings.reader_weight,
+            "disabled_emotions": config.settings.disabled_emotions,
+            "auto_disable_undetected": config.settings.auto_disable_undetected,
+            "show_optimizer_on_load": config.settings.show_optimizer_on_load,
             "extend_expression": config.settings.extend_expression,
             "max_gap_extend": config.settings.max_gap_extend,
             "postprocess_enabled": config.settings.postprocess_enabled,
@@ -1061,6 +1225,7 @@ def _config_to_dict(config: ProjectConfig) -> dict:
                 "tachie_dir": c.tachie_dir,
                 "layer_offset": c.layer_offset,
                 "emotion_presets": c.emotion_presets,
+                "emotion_intensity_presets": c.emotion_intensity_presets,
                 "compound_presets_2": c.compound_presets_2,
                 "compound_presets_3": c.compound_presets_3,
                 "compound_max_score": c.compound_max_score,
@@ -1079,6 +1244,13 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         model_path=settings_raw.get("model_path", "models/wrime-roberta"),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
+        context_turns=settings_raw.get("context_turns", 2),
+        context_speaker_labels=settings_raw.get("context_speaker_labels", True),
+        context_gap_seconds=settings_raw.get("context_gap_seconds", 0.4),
+        reader_weight=settings_raw.get("reader_weight", 0.0),
+        disabled_emotions=list(settings_raw.get("disabled_emotions", []) or []),
+        auto_disable_undetected=settings_raw.get("auto_disable_undetected", True),
+        show_optimizer_on_load=settings_raw.get("show_optimizer_on_load", True),
         extend_expression=settings_raw.get("extend_expression", True),
         max_gap_extend=settings_raw.get("max_gap_extend", 300),
         postprocess_enabled=settings_raw.get("postprocess_enabled", False),
@@ -1097,6 +1269,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
             tachie_dir=char_raw.get("tachie_dir", ""),
             layer_offset=char_raw.get("layer_offset", 1),
             emotion_presets=char_raw.get("emotion_presets", {}),
+            emotion_intensity_presets=char_raw.get("emotion_intensity_presets", {}),
             compound_presets_2=cp2,
             compound_presets_3=char_raw.get("compound_presets_3", {}),
             compound_max_score=char_raw.get("compound_max_score", 0.65),

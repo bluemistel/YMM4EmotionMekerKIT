@@ -21,7 +21,14 @@ def apply_postprocessing(
     voices: list[VoiceItem],
     raw_results: dict[int, EmotionResult],
     settings: Settings,
+    segment_of: dict[int, int] | None = None,
 ) -> dict[int, PostProcessedEmotion]:
+    """感情スコアに減衰（余韻）と勾配分類を適用する。
+
+    `segment_of`（voice_index -> segment_id）が与えられた場合、同一キャラの連続発話で
+    セグメントが切り替わった行を「場面の先頭」とみなし、余韻 carry をゼロにリセットし
+    勾配も計算しない（場面跨ぎの偽の急変を防ぐ）。`None` なら従来の通し計算。
+    """
     char_voices: dict[str, list[VoiceItem]] = {}
     for v in voices:
         if v.index in raw_results:
@@ -36,10 +43,18 @@ def apply_postprocessing(
     for char_name, char_list in char_voices.items():
         prev_effective: dict[str, float] = {label: 0.0 for label in EMOTION_LABELS}
         gradient_history: list[dict[str, float]] = []
+        prev_seg: int | None = None
 
         for i, voice in enumerate(char_list):
             raw = raw_results[voice.index]
             raw_dict = raw.to_dict()
+
+            # 場面境界（セグメント変化）では余韻・勾配履歴をリセットし「場面の先頭」扱い。
+            cur_seg = segment_of.get(voice.index) if segment_of is not None else None
+            is_boundary = segment_of is not None and i > 0 and cur_seg != prev_seg
+            if is_boundary:
+                prev_effective = {label: 0.0 for label in EMOTION_LABELS}
+                gradient_history = []
 
             effective: dict[str, float] = {}
             residual: dict[str, float] = {}
@@ -49,7 +64,7 @@ def apply_postprocessing(
                 residual[label] = round(carry, 4)
 
             gradient: dict[str, float] = {}
-            if i == 0:
+            if i == 0 or is_boundary:
                 gradient = {label: 0.0 for label in EMOTION_LABELS}
             else:
                 for label in EMOTION_LABELS:
@@ -74,6 +89,7 @@ def apply_postprocessing(
             )
 
             prev_effective = effective
+            prev_seg = cur_seg
 
     return result
 
@@ -136,6 +152,20 @@ def _classify_gradient(
     return "gradual" if chain_len >= gradual_window else None
 
 
+def gradient_dominant(gradient: dict[str, float]) -> str | None:
+    """勾配で「立ち上がった」感情（最大の正の変化量）を返す。
+
+    絶対値最大だと、別感情の急落（負の大きな変化）が拾われてしまい、
+    実際に強まった感情と勾配プリセットのキーがずれる（例: 楽→哀の場面で
+    哀ではなく急落した楽が選ばれる）。表情として出すべきは「強まった感情」
+    なので、正の変化が最大のラベルを採用する。全て非正なら None。
+    """
+    positives = {k: v for k, v in gradient.items() if v > 0}
+    if not positives:
+        return None
+    return max(positives, key=lambda k: positives[k])
+
+
 def resolve_gradient_preset(
     gradient: dict[str, float],
     gradient_type: str | None,
@@ -144,6 +174,8 @@ def resolve_gradient_preset(
     if not gradient_type:
         return None
 
-    dominant_label = max(gradient, key=lambda k: abs(gradient[k]))
+    dominant_label = gradient_dominant(gradient)
+    if dominant_label is None:
+        return None
     key = f"{gradient_type}_{dominant_label}"
     return gradient_presets.get(key)

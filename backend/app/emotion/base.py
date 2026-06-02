@@ -4,7 +4,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, asdict
 
 
-EMOTION_LABELS = ["joy", "anger", "sadness", "happiness", "surprise", "embarrassment"]
+EMOTION_LABELS = [
+    "joy", "anger", "sadness", "happiness", "surprise", "embarrassment",
+    "disgust", "fear", "exasperation",
+]
 
 EMOTION_LABELS_JA = {
     "joy": "喜",
@@ -13,6 +16,9 @@ EMOTION_LABELS_JA = {
     "happiness": "楽",
     "surprise": "驚き",
     "embarrassment": "照れ",
+    "disgust": "嫌悪",
+    "fear": "恐れ",
+    "exasperation": "呆れ",
 }
 
 
@@ -24,9 +30,21 @@ class EmotionResult:
     happiness: float = 0.0
     surprise: float = 0.0
     embarrassment: float = 0.0
+    disgust: float = 0.0
+    fear: float = 0.0
+    exasperation: float = 0.0
 
     def to_dict(self) -> dict[str, float]:
         return asdict(self)
+
+    def mask(self, disabled: set[str] | list[str] | None) -> "EmotionResult":
+        """無効指定された感情フィールドを 0 にして自身を返す。"""
+        if not disabled:
+            return self
+        for key in disabled:
+            if hasattr(self, key):
+                setattr(self, key, 0.0)
+        return self
 
     def dominant(self) -> str | None:
         scores = self.to_dict()

@@ -26,6 +26,8 @@ env/
 # ローカルの絶対パスや（設定した場合）LLM API キーを含むためコミットしない
 backend/data/config.yaml
 backend/data/*.yaml
+# プロジェクト別の手動ラベル（精度測定用のユーザーデータ）
+backend/data/labels/
 # 作業状態ファイル（設定一式・API キーを含みうる）
 *.ymmemo
 # 環境変数・認証情報
@@ -53,6 +55,8 @@ Desktop.ini
 *.tmp
 *.bak
 npm-debug.log*
+docs/
+resource/
 
 # ===== 別管理の埋め込みリポジトリ（本アプリと無関係） =====
 skills/

@@ -8,6 +8,7 @@ interface CharacterConfig {
   tachie_dir: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
+  emotion_intensity_presets: Record<string, Record<string, string>>;
   compound_presets_2: Record<string, string>;
   compound_presets_3: Record<string, string>;
   compound_max_score: number;
@@ -77,6 +78,7 @@ export default function CharacterList({
           tachie_dir: tachieDir || "",
           layer_offset: (c.layer_offset as number) ?? 1,
           emotion_presets: (c.emotion_presets as Record<string, string>) || {},
+          emotion_intensity_presets: (c.emotion_intensity_presets as Record<string, Record<string, string>>) || {},
           compound_presets_2: (c.compound_presets_2 as Record<string, string>) || {},
           compound_presets_3: (c.compound_presets_3 as Record<string, string>) || {},
           compound_max_score: (c.compound_max_score as number) ?? 0.65,
@@ -111,46 +113,60 @@ export default function CharacterList({
         </button>
       </div>
 
-      <div className="space-y-1.5">
+      {/* 色＋頭文字アイコンの横並び（多人数でも縦を圧迫しない）。hover で正式名。 */}
+      <div className="flex flex-wrap gap-2">
         {voiceChars.map((c) => {
           const cfg = configs[c.name];
-          const hasPresets = cfg?.preset_names && cfg.preset_names.length > 0;
+          const presetCount = cfg?.preset_names?.length || 0;
           const isSelected = selectedCharacter === c.name;
           const isAuto = !isSelected && autoHighlightedCharacter === c.name;
+          const initial = (c.name.trim()[0] || "?");
+          const bg = c.color || "var(--text-faint)";
+          const tachie = c.tachie_directory ? "立ち絵あり" : "立ち絵なし";
+          const title = `${c.name}｜${presetCount} presets｜${tachie}`;
 
           return (
             <button
               key={c.name}
               onClick={() => onSelectCharacter(c.name)}
-              className="w-full text-left flex items-center justify-between transition-all duration-150"
+              title={title}
+              className="flex items-center justify-center transition-all duration-150"
               style={{
-                padding: "9px 14px",
-                borderRadius: "8px",
-                fontSize: "0.86rem",
-                background: isSelected ? "var(--accent-soft)" : "var(--bg-surface)",
+                position: "relative",
+                width: "40px",
+                height: "40px",
+                borderRadius: "50%",
+                flexShrink: 0,
+                background: bg,
+                color: "#fff",
+                fontWeight: 700,
+                fontSize: "1.0rem",
+                textShadow: "0 1px 2px #00000066",
+                cursor: "pointer",
                 border: isSelected
-                  ? "1px solid var(--accent)"
+                  ? "2px solid var(--accent)"
                   : isAuto
-                    ? "1px dashed var(--accent)"
-                    : "1px solid var(--border-dim)",
-                color: "var(--text-primary)",
-                boxShadow: isSelected ? "0 0 0 1px var(--accent-ring) inset" : "none",
+                    ? "2px dashed var(--accent)"
+                    : "2px solid transparent",
+                boxShadow: isSelected ? "0 0 0 2px var(--accent-ring)" : "0 1px 3px #0000001f",
+                opacity: c.tachie_directory ? 1 : 0.5,
               }}
             >
-              <span className="truncate">{c.name}</span>
-              <span className="flex items-center gap-2" style={{ fontSize: "0.7rem" }}>
-                {isAuto && <span style={{ color: "var(--accent)" }}>選択中の台詞</span>}
-                {hasPresets && (
-                  <span style={{ color: "var(--em-happiness)", fontWeight: 700 }}>
-                    {cfg.preset_names!.length} presets
-                  </span>
-                )}
-                {c.tachie_directory ? (
-                  <span style={{ color: "var(--text-muted)" }}>立ち絵あり</span>
-                ) : (
-                  <span style={{ color: "var(--em-joy)" }}>立ち絵なし</span>
-                )}
-              </span>
+              {initial}
+              {presetCount > 0 && (
+                <span
+                  style={{
+                    position: "absolute",
+                    bottom: "-2px",
+                    right: "-2px",
+                    width: "9px",
+                    height: "9px",
+                    borderRadius: "50%",
+                    background: "var(--em-happiness)",
+                    border: "1.5px solid var(--bg-panel)",
+                  }}
+                />
+              )}
             </button>
           );
         })}

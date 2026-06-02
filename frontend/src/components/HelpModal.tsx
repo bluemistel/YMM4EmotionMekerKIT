@@ -45,53 +45,72 @@ export default function HelpModal() {
                 <Tip>YMM4 を閉じた状態で操作することをおすすめします。</Tip>
               </Section>
 
-              <Section title="Step 2: キャラクター設定">
+              <Section title="Step 2: 分析の最適化ウィザード（自動表示）">
                 <p>
-                  読み込み後、左パネルにキャラクター一覧が表示されます。
-                  動く立ち絵フォルダ内の preset.ini が自動検出されます。
+                  プロジェクトを読み込むと、動画の作りに合わせて分析設定を調整する
+                  「感情分析の最適化」ウィザードが自動で開きます。設問に答えて「この設定で分析開始」を押すと、最適化した設定で感情分析まで自動実行されます。
                 </p>
                 <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />preset.ini が見つからない場合は手動でパスを指定</li>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />「プリセット読込」でキャラクターの表情プリセットを読み込み</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>掛け合い重視:</strong> 相手のフリへのリアクション感情を重視（文脈ターン数＋話者名で文脈を区別）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情表現のメリハリ:</strong> 振れ幅を強く出すか穏やかにするか（reader ブレンド）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>会話のテンポと間:</strong> 台詞間の無音をどの長さで「場面の区切り」とみなすか（文脈ギャップ）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情の余韻・流れ:</strong> 前の行の余韻を残す／急変・徐々の変化に専用表情（後処理）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />「スキップ」で現在の設定のまま分析。以降は <strong style={{ color: "var(--text-secondary)" }}>設定 → 感情分析</strong> で手動調整、表示ON/OFFも切替可能</li>
                 </ul>
               </Section>
 
-              <Section title="Step 3: 感情マッピング設定">
+              <Section title="Step 3: キャラクター設定">
                 <p>
-                  キャラクターを選択すると、感情マッピング設定が表示されます。
-                  6つの基本感情に対応する表情プリセットを割り当てます。
+                  中央カラムのアイコン（色＋頭文字）で検出キャラを選びます。動く立ち絵フォルダ内の
+                  preset.ini が自動検出され、表情プリセットが読み込まれます。
                 </p>
                 <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />ドロップダウンからプリセットを選択</li>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />複合感情（例：喜び＋恥ずかしさ）も設定可能</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />preset.ini が見つからない場合は手動でパスを指定して「プリセット読込」</li>
+                </ul>
+              </Section>
+
+              <Section title="Step 4: 感情マッピング設定">
+                <p>
+                  キャラクターを選択すると感情マッピングが表示されます。9つの感情
+                  （喜・怒・哀・楽・驚き・照れ・嫌悪・恐れ・呆れ）に表情プリセットを割り当てます。
+                </p>
+                <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />単独感情は <strong style={{ color: "var(--text-secondary)" }}>弱／中／強</strong> の強度別プリセットも任意設定（未設定は中）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />複合感情（例：喜び＋照れ）、急変・徐々の勾配プリセットも設定可能</li>
                   <li style={{ color: "var(--text-muted)" }}><Dot />設定は自動保存</li>
                 </ul>
               </Section>
 
-              <Section title="Step 4: 感情分析を実行">
+              <Section title="Step 5: 結果確認と個別調整">
                 <p>
-                  右パネルの「感情分析」ボタンをクリックすると、全台詞テキストに対して
-                  BERT モデルによる感情分析が実行されます。
+                  右カラムに分析結果と感情バッジが並びます。台詞を選ぶと左カラムに大きなプレビューと
+                  パーツ一覧、中央の「個別設定」タブで表情を上書きできます。
                 </p>
                 <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />初回実行時はモデルのダウンロードに時間がかかります</li>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />結果が不適切な場合、個別にオーバーライド可能</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情で指定:</strong> 感情をクリック順に最大3つ（複合）。第1感情のみのときは強度（弱/中/強）も指定可</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>プリセットで指定:</strong> プリセットを直接選択</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>パーツ個別変更:</strong> 目・口などを個別に差し替え（変更すると [個別] マーク）</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>前回の表情を保つ:</strong> 新しい表情を作らず直前の表情を継続</li>
                 </ul>
               </Section>
 
-              <Section title="Step 5: プレビュー確認">
+              <Section title="Step 6: 書き出し">
                 <p>
-                  分析完了後、タイムラインプレビューで表情アイテムの配置を確認できます。
-                </p>
-              </Section>
-
-              <Section title="Step 6: 実行（書き出し）">
-                <p>
-                  「書き出し」パネルで出力先を確認し、実行ボタンで表情アイテムをプロジェクトに書き出します。
+                  ヘッダーの「書き出し」から出力先を確認し、実行で表情アイテムをプロジェクトに書き出します。
                 </p>
                 <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />デフォルトで「_emotion」を付けて保存</li>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />バックアップオプションで元ファイルを保護</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />既定で「_emotion」を付けて保存。バックアップで元ファイルを保護</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />表情アイテムは同キャラの立ち絵が表示されている区間に合わせて配置・延長されます</li>
+                </ul>
+              </Section>
+
+              <Section title="感情辞書（語句→感情の補正）">
+                <p>
+                  台詞に特定の語句が含まれるとき、指定した感情を <strong style={{ color: "var(--text-secondary)" }}>強める（boost＝加算）</strong> または
+                  <strong style={{ color: "var(--text-secondary)" }}>固定する（set）</strong> ルールです（<strong style={{ color: "var(--text-secondary)" }}>設定 → 感情辞書</strong>）。口語のクセを反映できます。
+                </p>
+                <ul className="list-none mt-2 space-y-1" style={{ paddingLeft: "1em" }}>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />「呆れ」は主にこの辞書で検出されます。「まぁ」「えー」などの感動詞を登録すると検出されやすくなります</li>
                 </ul>
               </Section>
 
@@ -99,14 +118,8 @@ export default function HelpModal() {
                 <ul className="list-none space-y-1" style={{ paddingLeft: "1em" }}>
                   <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>ローカル（BERT）:</strong> オフラインで動作。WRIME v2 モデル</li>
                   <li style={{ color: "var(--text-muted)" }}><Dot /><strong style={{ color: "var(--text-secondary)" }}>LLM:</strong> API キーが必要。より高精度な分析</li>
-                  <li style={{ color: "var(--text-muted)" }}><Dot />モデルの選択と API キーの入力は、ヘッダー右上の <strong style={{ color: "var(--text-secondary)" }}>歯車アイコン → 設定 → 感情分析モデル</strong> から行えます。</li>
+                  <li style={{ color: "var(--text-muted)" }}><Dot />モデルの選択と API キーの入力は <strong style={{ color: "var(--text-secondary)" }}>設定 → 感情分析</strong> から</li>
                 </ul>
-              </Section>
-
-              <Section title="設定ファイル">
-                <p>
-                  設定は <code className="mono-text" style={{ background: "var(--bg-elevated)", padding: "1px 6px", borderRadius: "4px", fontSize: "0.8125rem" }}>backend/data/config.yaml</code> に自動保存されます。
-                </p>
               </Section>
 
               <Section title="トラブルシューティング">

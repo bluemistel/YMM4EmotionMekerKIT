@@ -38,6 +38,12 @@
   --em-surprise-bg: #8a5fd016;
   --em-embarrassment: #cf6f93;
   --em-embarrassment-bg: #cf6f9316;
+  --em-disgust: #7a8c3a;
+  --em-disgust-bg: #7a8c3a16;
+  --em-fear: #5b6b8c;
+  --em-fear-bg: #5b6b8c16;
+  --em-exasperation: #b08a3e;
+  --em-exasperation-bg: #b08a3e16;
 
   --gradient-sudden: #d2683a;
   --gradient-gradual: #2f9a93;
@@ -245,6 +251,9 @@ body {
 .badge-happiness { background: var(--em-happiness-bg); color: var(--em-happiness); border: 1px solid #2a9d6a33; }
 .badge-surprise { background: var(--em-surprise-bg); color: var(--em-surprise); border: 1px solid #8a5fd033; }
 .badge-embarrassment { background: var(--em-embarrassment-bg); color: var(--em-embarrassment); border: 1px solid #cf6f9333; }
+.badge-disgust { background: var(--em-disgust-bg); color: var(--em-disgust); border: 1px solid #7a8c3a33; }
+.badge-fear { background: var(--em-fear-bg); color: var(--em-fear); border: 1px solid #5b6b8c33; }
+.badge-exasperation { background: var(--em-exasperation-bg); color: var(--em-exasperation); border: 1px solid #b08a3e33; }
 .badge-default { background: var(--bg-elevated); color: var(--text-muted); border: 1px solid var(--border-dim); }
 .badge-sudden { background: #d2683a16; color: var(--gradient-sudden); border: 1px solid #d2683a33; }
 .badge-gradual { background: #2f9a9316; color: var(--gradient-gradual); border: 1px solid #2f9a9333; }

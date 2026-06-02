@@ -13,6 +13,9 @@ class CharacterConfig:
     tachie_dir: str = ""
     layer_offset: int = 1
     emotion_presets: dict[str, str] = field(default_factory=dict)
+    # 単独感情の強度別プリセット: 感情 → {"weak": プリセット, "strong": プリセット}。
+    # 「中」は emotion_presets[感情] を使う（未設定の弱/強も中へフォールバック）。
+    emotion_intensity_presets: dict[str, dict[str, str]] = field(default_factory=dict)
     compound_presets_2: dict[str, str] = field(default_factory=dict)
     compound_presets_3: dict[str, str] = field(default_factory=dict)
     compound_max_score: float = 0.65
@@ -30,6 +33,22 @@ class Settings:
     model_path: str = "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
     emotion_threshold: float = 0.3
     context_window: int = 3
+    # 分析時に対象台詞の直前に含める「ターン数」（話者分離つき文脈）。
+    context_turns: int = 2
+    # 文脈・対象を「話者名: 台詞」形式にして話者を区別する。
+    context_speaker_labels: bool = True
+    # 場面/文脈の境界とみなす無音ギャップ（秒）。プロジェクトの FPS でフレーム換算し、
+    # この間隔以上空いた箇所で文脈を区切り・余韻をリセット・勾配を計算しない。
+    # 0 でも最小1フレーム区切りで運用可能（TTS の「間を空けて区切る」運用に対応）。
+    context_gap_seconds: float = 0.4
+    # WRIME の reader 感情(視聴者視点)の混合率（0=writerのみ, 1=readerのみ）。
+    reader_weight: float = 0.0
+    # 検出を無効化する感情ラベル（空=全有効）。台本に不要な感情を切るのに使う。
+    disabled_emotions: list[str] = field(default_factory=list)
+    # 分析で検出されなかった感情ラベルを自動的に OFF にする（既定ON）。
+    auto_disable_undetected: bool = True
+    # プロジェクト読み込み後に感情分析の自動最適化ウィザードを表示する（既定ON）。
+    show_optimizer_on_load: bool = True
     extend_expression: bool = True
     max_gap_extend: int = 300
     postprocess_enabled: bool = False
@@ -61,6 +80,13 @@ def load_config(path: str | Path) -> ProjectConfig:
         model_path=settings_raw.get("model_path", "models/wrime-roberta"),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
+        context_turns=settings_raw.get("context_turns", 2),
+        context_speaker_labels=settings_raw.get("context_speaker_labels", True),
+        context_gap_seconds=settings_raw.get("context_gap_seconds", 0.4),
+        reader_weight=settings_raw.get("reader_weight", 0.0),
+        disabled_emotions=list(settings_raw.get("disabled_emotions", []) or []),
+        auto_disable_undetected=settings_raw.get("auto_disable_undetected", True),
+        show_optimizer_on_load=settings_raw.get("show_optimizer_on_load", True),
         extend_expression=settings_raw.get("extend_expression", True),
         max_gap_extend=settings_raw.get("max_gap_extend", 300),
         postprocess_enabled=settings_raw.get("postprocess_enabled", False),
@@ -81,6 +107,7 @@ def load_config(path: str | Path) -> ProjectConfig:
             tachie_dir=char_raw.get("tachie_dir", ""),
             layer_offset=char_raw.get("layer_offset", 1),
             emotion_presets=char_raw.get("emotion_presets", {}),
+            emotion_intensity_presets=char_raw.get("emotion_intensity_presets", {}),
             compound_presets_2=cp2,
             compound_presets_3=char_raw.get("compound_presets_3", {}),
             compound_max_score=char_raw.get("compound_max_score", 0.65),
@@ -99,6 +126,13 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "model_path": config.settings.model_path,
             "emotion_threshold": config.settings.emotion_threshold,
             "context_window": config.settings.context_window,
+            "context_turns": config.settings.context_turns,
+            "context_speaker_labels": config.settings.context_speaker_labels,
+            "context_gap_seconds": config.settings.context_gap_seconds,
+            "reader_weight": config.settings.reader_weight,
+            "disabled_emotions": config.settings.disabled_emotions,
+            "auto_disable_undetected": config.settings.auto_disable_undetected,
+            "show_optimizer_on_load": config.settings.show_optimizer_on_load,
             "extend_expression": config.settings.extend_expression,
             "max_gap_extend": config.settings.max_gap_extend,
             "postprocess_enabled": config.settings.postprocess_enabled,
@@ -117,6 +151,7 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "tachie_dir": char.tachie_dir,
             "layer_offset": char.layer_offset,
             "emotion_presets": char.emotion_presets,
+            "emotion_intensity_presets": char.emotion_intensity_presets,
             "compound_presets_2": char.compound_presets_2,
             "compound_presets_3": char.compound_presets_3,
             "compound_max_score": char.compound_max_score,
@@ -177,6 +212,9 @@ def generate_template_config(
                 "happiness": "",
                 "surprise": "",
                 "embarrassment": "",
+                "disgust": "",
+                "fear": "",
+                "exasperation": "",
                 "default": default_preset,
             },
         )

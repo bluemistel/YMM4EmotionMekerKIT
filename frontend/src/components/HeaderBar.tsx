@@ -105,6 +105,14 @@ export default function HeaderBar({ project, onReload, onSaveWorkstate, exePath 
                 ↻ 再読込
               </button>
             )}
+            <button
+              onClick={() => window.dispatchEvent(new CustomEvent("open-execute"))}
+              className="btn-primary"
+              style={{ marginLeft: "2px", fontSize: "0.76rem", padding: "6px 14px" }}
+              title="表情アイテムを生成してプロジェクトに書き出します"
+            >
+              ▶ 書き出し実行
+            </button>
           </div>
         )}
         <HelpModal />

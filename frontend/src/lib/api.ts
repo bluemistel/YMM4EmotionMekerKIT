@@ -120,6 +120,16 @@ export interface OverrideInfo {
   part_overrides: Record<string, string> | null;
   locked: boolean;
   hold_previous?: boolean;
+  emotion_labels?: string[] | null;
+  emotion_tier?: string | null;
+}
+
+export interface LexiconEntry {
+  pattern: string;
+  emotion: string;
+  weight: number;
+  mode: "boost" | "set";
+  char: string | null;
 }
 
 export interface PlacementItem {
@@ -230,7 +240,7 @@ export const api = {
   },
 
   analyze(timelineIndex = 0, model?: string) {
-    return request<{ count: number; results: Record<string, AnalysisItem> }>(
+    return request<{ count: number; results: Record<string, AnalysisItem>; disabled_emotions?: string[] }>(
       "/api/analyze",
       {
         method: "POST",
@@ -240,7 +250,7 @@ export const api = {
   },
 
   getAnalysisResult() {
-    return request<{ results: Record<string, AnalysisItem> }>("/api/analyze/result");
+    return request<{ results: Record<string, AnalysisItem>; disabled_emotions?: string[] }>("/api/analyze/result");
   },
 
   previewExecution(timelineIndex = 0) {
@@ -297,7 +307,7 @@ export const api = {
     );
   },
 
-  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean }) {
+  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string }) {
     return request<{ status: string }>(
       `/api/override/${voiceIndex}`,
       {
@@ -331,6 +341,17 @@ export const api = {
     );
   },
 
+  getLexicon() {
+    return request<{ entries: LexiconEntry[] }>("/api/lexicon");
+  },
+
+  updateLexicon(entries: LexiconEntry[]) {
+    return request<{ status: string; count: number; entries: LexiconEntry[] }>(
+      "/api/lexicon",
+      { method: "PUT", body: JSON.stringify({ entries }) }
+    );
+  },
+
   saveWorkstate(path: string) {
     return request<{ status: string; path: string }>(
       "/api/workstate/save",
@@ -361,7 +382,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.1";
+export const APP_VERSION_FALLBACK = "1.0.2";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

@@ -17,12 +17,17 @@ SYSTEM_PROMPT = """\
 - happiness (楽): 安心、満足、穏やかな幸福感
 - surprise (驚き): 驚き、意外性
 - embarrassment (照れ): 照れ、恥ずかしさ、てれくささ
+- disgust (嫌悪): 嫌悪感、不快、うんざり
+- fear (恐れ): 恐怖、不安、おびえ
+- exasperation (呆れ): 相手の発言に対する あきれ・脱力・冷めた反応・ツッコミ
 
 短文・口語・感嘆符の多い台詞が入力されます。
-文脈情報が与えられた場合は前後の会話の流れも考慮してください。
+文脈（直前の会話）が与えられた場合は会話の流れを考慮し、相手のフリに対する
+リアクションとしての感情も読み取ってください。ただし判定対象は必ず
+【台詞】に示された「最後の話者の発話」のみで、文脈中の他の発話は判定しません。
 
-必ず以下のJSON形式のみで回答してください:
-{"joy": 0.0, "anger": 0.0, "sadness": 0.0, "happiness": 0.0, "surprise": 0.0, "embarrassment": 0.0}
+必ず以下のJSON形式のみで回答してください（説明文は不要）:
+{"joy": 0.0, "anger": 0.0, "sadness": 0.0, "happiness": 0.0, "surprise": 0.0, "embarrassment": 0.0, "disgust": 0.0, "fear": 0.0, "exasperation": 0.0}
 """
 
 
@@ -74,6 +79,7 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
             response = client.messages.create(
                 model=self.model,
                 max_tokens=200,
+                temperature=0,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_msg}],
             )
@@ -83,6 +89,8 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
             response = client.chat.completions.create(
                 model=self.model,
                 max_tokens=200,
+                temperature=0,
+                response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},

@@ -15,7 +15,17 @@ interface Props {
   overrideParts?: Record<string, string>;
   /** true のとき画像エリアをマウスホイールでカーソル位置中心に拡大できる */
   zoomable?: boolean;
+  /** 右側の「パーツ一覧」を表示するか（既定 true）。左カラム統合時は false。 */
+  showPartsList?: boolean;
+  /** 画像ボックスを大きく表示する（カラム幅にフィット）。 */
+  large?: boolean;
+  /** 指定すると拡大率・表示位置をこのキーで保持し、台詞（プリセット）切替でも
+   *  リセットしない（ダブルクリックでリセットは可能）。 */
+  viewKey?: string;
 }
+
+// viewKey ごとにズーム状態を保持する（インスタンス再マウント・プリセット変更を跨ぐ）。
+const viewStore: Record<string, { scale: number; tx: number; ty: number }> = {};
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
@@ -51,14 +61,23 @@ export default function PresetPreview({
   basePresetName,
   overrideParts,
   zoomable = false,
+  showPartsList = true,
+  large = false,
+  viewKey,
 }: Props) {
   const [merged, setMerged] = useState<PresetPreviewInfo | null>(null);
   const [presetOnly, setPresetOnly] = useState<PresetPreviewInfo | null>(null);
   const [error, setError] = useState("");
   // Cursor-anchored zoom: scale + translation (px, relative to the box).
-  const [view, setView] = useState({ scale: 1, tx: 0, ty: 0 });
+  const [view, setView] = useState(() =>
+    viewKey && viewStore[viewKey] ? { ...viewStore[viewKey] } : { scale: 1, tx: 0, ty: 0 }
+  );
   const viewRef = useRef(view);
   viewRef.current = view;
+  // 保持指定があれば view 変更を store に書き出す。
+  useEffect(() => {
+    if (viewKey) viewStore[viewKey] = view;
+  }, [view, viewKey]);
   const boxRef = useRef<HTMLDivElement>(null);
   // Drag-to-pan state (only meaningful while zoomed in).
   const [dragging, setDragging] = useState(false);
@@ -70,11 +89,17 @@ export default function PresetPreview({
   // Serialize overrideParts for a stable effect dependency
   const overrideKey = JSON.stringify(overrideParts || {});
 
-  // Reset zoom only when the previewed preset/character changes — NOT when
-  // part overrides change (so editing parts keeps the current zoom).
+  // Reset zoom AND blank the image only when the previewed preset/character
+  // changes — NOT when part overrides change. Keeping the previous image during
+  // an overrideParts refetch holds the box height stable, so the surrounding
+  // scroll position doesn't jump when editing a part.
   useEffect(() => {
-    setView({ scale: 1, tx: 0, ty: 0 });
-  }, [characterName, presetName, basePresetName]);
+    // viewKey 指定時は拡大率・位置を保持（台詞切替でリセットしない）。
+    if (!viewKey) setView({ scale: 1, tx: 0, ty: 0 });
+    setError("");
+    setMerged(null);
+    setPresetOnly(null);
+  }, [characterName, presetName, basePresetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetZoom() {
     setView({ scale: 1, tx: 0, ty: 0 });
@@ -173,9 +198,6 @@ export default function PresetPreview({
 
   useEffect(() => {
     if (!characterName || !presetName) return;
-    setError("");
-    setMerged(null);
-    setPresetOnly(null);
 
     // Final composite (YMM4 default + base + preset + part overrides),
     // computed server-side so hover/inline previews always agree.
@@ -233,8 +255,11 @@ export default function PresetPreview({
           onMouseDown={zoomable ? onBoxMouseDown : undefined}
           className="relative flex-shrink-0 overflow-hidden"
           style={{
-            width: "180px",
-            height: "240px",
+            width: large ? "100%" : "180px",
+            maxWidth: large ? "280px" : undefined,
+            aspectRatio: large ? "3 / 4" : undefined,
+            height: large ? "auto" : "240px",
+            margin: large ? "0 auto" : undefined,
             background: "var(--bg-surface)",
             borderRadius: "8px",
             border: "1px solid var(--border-dim)",
@@ -300,6 +325,7 @@ export default function PresetPreview({
           )}
         </div>
 
+        {showPartsList && (
         <div className="flex-1 space-y-1.5">
           <h3 style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "8px", letterSpacing: "0.05em" }}>パーツ一覧</h3>
           {activeParts.map(([field, path]) => {
@@ -327,6 +353,7 @@ export default function PresetPreview({
             <p style={{ color: "var(--text-faint)", fontSize: "0.8125rem" }}>全パーツデフォルト</p>
           )}
         </div>
+        )}
       </div>
     </div>
   );

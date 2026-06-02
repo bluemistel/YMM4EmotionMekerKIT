@@ -8,14 +8,18 @@ import CharacterList from "@/components/CharacterList";
 import MappingPanel from "@/components/MappingPanel";
 import DialogueList from "@/components/DialogueList";
 import TimelinePreview from "@/components/TimelinePreview";
-import ExecutePanel from "@/components/ExecutePanel";
-import PostProcessSettings, { PostProcessConfig } from "@/components/PostProcessSettings";
+import ExecuteModal from "@/components/ExecuteModal";
+import PreviewPartsPanel from "@/components/PreviewPartsPanel";
+import AnalysisOptimizerModal, { OptimizerInitial } from "@/components/AnalysisOptimizerModal";
+import { OverrideEditorProvider } from "@/components/OverrideEditorContext";
+import type { PostProcessConfig } from "@/components/PostProcessSettings";
 
 interface CharacterConfig {
   preset_ini: string;
   tachie_dir: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
+  emotion_intensity_presets: Record<string, Record<string, string>>;
   compound_presets_2: Record<string, string>;
   compound_presets_3: Record<string, string>;
   compound_max_score: number;
@@ -43,6 +47,10 @@ export default function Home() {
     gradient_gradual_max_delta: 0.15,
   });
   const [ymm4ExePath, setYmm4ExePath] = useState("");
+  const [disabledEmotions, setDisabledEmotions] = useState<string[]>([]);
+  const [showOptimizer, setShowOptimizer] = useState(true);
+  const [optimizerOpen, setOptimizerOpen] = useState(false);
+  const [optimizerInitial, setOptimizerInitial] = useState<OptimizerInitial>({ kakeai: true, readerWeight: 0.2, postprocess: false, contextGapSeconds: 0.4 });
 
   useEffect(() => {
     api.init();
@@ -60,6 +68,20 @@ export default function Home() {
       });
   }, []);
 
+  // 設定モーダル等で設定が変わったら再取得（検出ラベルの有効/無効などを反映）。
+  useEffect(() => {
+    function onChange() {
+      api
+        .autoLoadConfig()
+        .then((cfg) => {
+          if (cfg.settings) handleSettingsLoaded(cfg.settings as Record<string, unknown>);
+        })
+        .catch(() => {});
+    }
+    window.addEventListener("ymm4-settings-changed", onChange);
+    return () => window.removeEventListener("ymm4-settings-changed", onChange);
+  }, []);
+
   const fps = project?.video_info?.FPS || 30;
 
   function handleSettingsLoaded(settings: Record<string, unknown>) {
@@ -73,6 +95,18 @@ export default function Home() {
     if (typeof settings.ymm4_exe_path === "string") {
       setYmm4ExePath(settings.ymm4_exe_path as string);
     }
+    if (Array.isArray(settings.disabled_emotions)) {
+      setDisabledEmotions(settings.disabled_emotions as string[]);
+    }
+    setShowOptimizer(settings.show_optimizer_on_load !== false);
+    const turns = typeof settings.context_turns === "number" ? (settings.context_turns as number) : 2;
+    const speaker = settings.context_speaker_labels !== false;
+    setOptimizerInitial({
+      kakeai: turns >= 1 && speaker,
+      readerWeight: typeof settings.reader_weight === "number" ? (settings.reader_weight as number) : 0.2,
+      postprocess: (settings.postprocess_enabled as boolean) ?? false,
+      contextGapSeconds: typeof settings.context_gap_seconds === "number" ? (settings.context_gap_seconds as number) : 0.4,
+    });
   }
 
   function handleConfigChange(name: string, config: CharacterConfig) {
@@ -102,6 +136,7 @@ export default function Home() {
         tachie_dir: tachieDir || "",
         layer_offset: (c.layer_offset as number) ?? 1,
         emotion_presets: (c.emotion_presets as Record<string, string>) || {},
+        emotion_intensity_presets: (c.emotion_intensity_presets as Record<string, Record<string, string>>) || {},
         compound_presets_2: (c.compound_presets_2 as Record<string, string>) || {},
         compound_presets_3: (c.compound_presets_3 as Record<string, string>) || {},
         compound_max_score: (c.compound_max_score as number) ?? 0.65,
@@ -113,6 +148,28 @@ export default function Home() {
     }
     setConfigs(newConfigs);
     if (applySettings && template.settings) handleSettingsLoaded(template.settings);
+  }
+
+  // 分析本体（読込・検出後に実行）。ウィザードの開始/スキップからも呼ぶ。
+  async function runAnalysis() {
+    setFlowPhase("analyzing");
+    setFlowMessage("感情分析を実行しています…（初回はモデルのダウンロードで数分かかる場合があります）");
+    try {
+      const res = await api.analyze();
+      setAnalysisResults(res.results);
+      if (res.disabled_emotions) setDisabledEmotions(res.disabled_emotions);
+      try {
+        const preview = await api.previewExecution();
+        setPlacements(preview.placements);
+      } catch {
+        // preview may fail if some characters are unconfigured
+      }
+      setFlowPhase("done");
+      setFlowMessage("");
+    } catch (e) {
+      setFlowPhase("error");
+      setFlowMessage(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function runFullPipeline(path: string) {
@@ -132,24 +189,32 @@ export default function Home() {
       await detectCharacters();
       await api.detectGroups(0, 1).catch(() => {});
 
-      setFlowPhase("analyzing");
-      setFlowMessage("感情分析を実行しています…（初回はモデルのダウンロードで数分かかる場合があります）");
-      const res = await api.analyze();
-      setAnalysisResults(res.results);
-
-      try {
-        const preview = await api.previewExecution();
-        setPlacements(preview.placements);
-      } catch {
-        // preview may fail if some characters are unconfigured
+      // 自動最適化ウィザードを挟む（無効なら即分析）。
+      if (showOptimizer) {
+        setFlowMessage("");
+        setOptimizerOpen(true);
+      } else {
+        await runAnalysis();
       }
-
-      setFlowPhase("done");
-      setFlowMessage("");
     } catch (e) {
       setFlowPhase("error");
       setFlowMessage(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  async function handleOptimizerStart(patch: Record<string, unknown>) {
+    setOptimizerOpen(false);
+    try {
+      await api.updateSettings(patch);
+    } catch {
+      // non-fatal
+    }
+    await runAnalysis();
+  }
+
+  function handleOptimizerSkip() {
+    setOptimizerOpen(false);
+    void runAnalysis();
   }
 
   // --- 作業状態 (work-state) 保存 / 復元 ---
@@ -182,6 +247,7 @@ export default function Home() {
       try {
         const r = await api.getAnalysisResult();
         setAnalysisResults(r.results);
+        if (r.disabled_emotions) setDisabledEmotions(r.disabled_emotions);
       } catch {
         setAnalysisResults(null);
       }
@@ -230,6 +296,7 @@ export default function Home() {
     try {
       const r = await api.getAnalysisResult();
       setAnalysisResults(r.results);
+      if (r.disabled_emotions) setDisabledEmotions(r.disabled_emotions);
     } catch {
       // ignore
     }
@@ -242,6 +309,7 @@ export default function Home() {
       await api.detectGroups(0, 1).catch(() => {});
       const res = await api.analyze();
       setAnalysisResults(res.results);
+      if (res.disabled_emotions) setDisabledEmotions(res.disabled_emotions);
       try {
         const preview = await api.previewExecution();
         setPlacements(preview.placements);
@@ -303,70 +371,88 @@ export default function Home() {
             />
           </div>
         ) : (
-          <div className="h-full grid grid-cols-12 gap-4 px-6 py-5 max-w-[1440px] mx-auto">
-            <div className="col-span-5 overflow-y-auto pr-1 flex flex-col gap-4">
-              <CharacterList
-                project={project}
-                configs={configs}
-                onConfigsChange={setConfigs}
-                onSelectCharacter={setSelectedCharacter}
-                selectedCharacter={selectedCharacter}
-                autoHighlightedCharacter={autoHighlightedCharacter}
-                onSettingsLoaded={handleSettingsLoaded}
-                onRedetect={() => detectCharacters(false)}
-              />
+          <OverrideEditorProvider
+            voiceIndex={selectedVoiceIndex}
+            analysisItem={selectedAnalysisItem}
+            characterName={activeCharacter || ""}
+            presetNames={activeConfig?.preset_names || []}
+            availableFiles={activeConfig?.available_files || {}}
+            basePresetName={activeConfig?.emotion_presets?.default}
+            onOverrideChange={refreshResolution}
+          >
+            <div className="h-full grid grid-cols-12 gap-4 px-6 py-5 max-w-[1880px] mx-auto">
+              {/* カラム1: 固定プレビュー + パーツ個別変更 */}
+              <div className="col-span-3 overflow-y-auto pr-1 flex flex-col gap-4">
+                <PreviewPartsPanel />
+              </div>
 
-              {activeCharacter && activeConfig && (
-                <MappingPanel
-                  characterName={activeCharacter}
-                  config={activeConfig}
-                  onConfigChange={(c) => handleConfigChange(activeCharacter, c)}
-                  tab={mappingTab}
-                  onTabChange={setMappingTab}
-                  resolvedSlot={resolvedSlot}
+              {/* カラム2: キャラクター設定 + 個別設定 */}
+              <div className="col-span-3 overflow-y-auto pr-1 flex flex-col gap-4">
+                <CharacterList
+                  project={project}
+                  configs={configs}
+                  onConfigsChange={setConfigs}
+                  onSelectCharacter={setSelectedCharacter}
+                  selectedCharacter={selectedCharacter}
+                  autoHighlightedCharacter={autoHighlightedCharacter}
+                  onSettingsLoaded={handleSettingsLoaded}
+                  onRedetect={() => detectCharacters(false)}
+                />
+
+                {activeCharacter && activeConfig && (
+                  <MappingPanel
+                    characterName={activeCharacter}
+                    config={activeConfig}
+                    onConfigChange={(c) => handleConfigChange(activeCharacter, c)}
+                    tab={mappingTab}
+                    onTabChange={setMappingTab}
+                    resolvedSlot={resolvedSlot}
+                    selectedVoiceIndex={selectedVoiceIndex}
+                    analysisItem={selectedAnalysisItem}
+                    onSaved={refreshResolution}
+                    postprocessEnabled={postProcessSettings.postprocess_enabled}
+                    disabledEmotions={disabledEmotions}
+                  />
+                )}
+              </div>
+
+              {/* カラム3: 感情分析結果 + タイムライン */}
+              <div className="col-span-6 overflow-y-auto pr-1 flex flex-col gap-4">
+                <DialogueList
+                  analysisResults={analysisResults}
+                  fps={fps}
+                  onSelectVoice={(idx) => {
+                    setSelectedVoiceIndex(idx);
+                    setMappingTab("mapping");
+                    const ch = analysisResults?.[String(idx)]?.character_name;
+                    if (ch) setSelectedCharacter(ch);
+                  }}
+                  onReanalyze={handleReanalyze}
+                  analyzing={flowPhase === "analyzing"}
                   selectedVoiceIndex={selectedVoiceIndex}
-                  analysisItem={selectedAnalysisItem}
-                  onOverrideChange={refreshResolution}
-                  onSaved={refreshResolution}
-                  postprocessEnabled={postProcessSettings.postprocess_enabled}
                 />
-              )}
-            </div>
 
-            <div className="col-span-7 overflow-y-auto pr-1 flex flex-col gap-4">
-              <DialogueList
-                analysisResults={analysisResults}
-                fps={fps}
-                onSelectVoice={(idx) => {
-                  setSelectedVoiceIndex(idx);
-                  setMappingTab("mapping");
-                  const ch = analysisResults?.[String(idx)]?.character_name;
-                  if (ch) setSelectedCharacter(ch);
-                }}
-                onReanalyze={handleReanalyze}
-                analyzing={flowPhase === "analyzing"}
-                selectedVoiceIndex={selectedVoiceIndex}
-              />
-
-              <TimelinePreview
-                placements={placements}
-                totalFrames={totalFrames}
-                characterColors={characterColors}
-                playheadFrame={playheadFrame}
-              />
-
-              <div className="grid grid-cols-2 gap-4 items-start">
-                <PostProcessSettings
-                  settings={postProcessSettings}
-                  onSettingsChange={setPostProcessSettings}
-                />
-                <ExecutePanel
-                  projectPath={project.path}
-                  hasAnalysis={analysisResults !== null && Object.keys(analysisResults).length > 0}
+                <TimelinePreview
+                  placements={placements}
+                  totalFrames={totalFrames}
+                  characterColors={characterColors}
+                  playheadFrame={playheadFrame}
                 />
               </div>
             </div>
-          </div>
+
+            <ExecuteModal
+              projectPath={project.path}
+              hasAnalysis={analysisResults !== null && Object.keys(analysisResults).length > 0}
+            />
+
+            <AnalysisOptimizerModal
+              open={optimizerOpen}
+              initial={optimizerInitial}
+              onStart={handleOptimizerStart}
+              onSkip={handleOptimizerSkip}
+            />
+          </OverrideEditorProvider>
         )}
       </main>
     </div>

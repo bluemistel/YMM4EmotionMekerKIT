@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { api, getAppVersion, openExternalUrl, pickExePath } from "@/lib/api";
+import LexiconPanel from "./LexiconPanel";
+import PostProcessSettings, { PostProcessConfig } from "./PostProcessSettings";
 
 const NOTION_BUG_REPORT_URL =
   "https://ionian-gallimimus-e47.notion.site/32b8c5bf8aa481978f37e470a25e1e01";
@@ -19,8 +21,79 @@ const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "llm_openai", label: "LLM — OpenAI (API キー必要)" },
 ];
 
+const DETECTABLE_EMOTIONS: { key: string; label: string }[] = [
+  { key: "joy", label: "喜" },
+  { key: "anger", label: "怒" },
+  { key: "sadness", label: "哀" },
+  { key: "happiness", label: "楽" },
+  { key: "surprise", label: "驚き" },
+  { key: "embarrassment", label: "照れ" },
+  { key: "disgust", label: "嫌悪" },
+  { key: "fear", label: "恐れ" },
+  { key: "exasperation", label: "呆れ" },
+];
+
+// OFF にすると 怒/驚/哀 への補助寄与も失われるラベル（事前警告対象）。
+const SPILLOVER_EMOTIONS = new Set(["disgust", "fear"]);
+
+type Section = "general" | "analysis" | "lexicon" | "about";
+
+const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
+  {
+    key: "general",
+    label: "全般",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
+      </svg>
+    ),
+  },
+  {
+    key: "analysis",
+    label: "感情分析",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+        <line x1="9" y1="9.5" x2="9.01" y2="9.5" />
+        <line x1="15" y1="9.5" x2="15.01" y2="9.5" />
+      </svg>
+    ),
+  },
+  {
+    key: "lexicon",
+    label: "感情辞書",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M4 19.5A2.5 2.5 0 016.5 17H20" />
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" />
+      </svg>
+    ),
+  },
+  {
+    key: "about",
+    label: "バージョン情報",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <circle cx="12" cy="12" r="9" />
+        <line x1="12" y1="11" x2="12" y2="16" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+    ),
+  },
+];
+
+const SECTION_TITLE: Record<Section, string> = {
+  general: "全般",
+  analysis: "感情分析",
+  lexicon: "感情辞書",
+  about: "バージョン情報",
+};
+
 export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [open, setOpen] = useState(false);
+  const [section, setSection] = useState<Section>("general");
   const [draft, setDraft] = useState(exePath);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
@@ -30,36 +103,108 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [llmApiKey, setLlmApiKey] = useState("");
   const [modelSaving, setModelSaving] = useState(false);
   const [modelSavedMsg, setModelSavedMsg] = useState("");
+  // 分析の詳細（文脈・reader ブレンド）
+  const [contextTurns, setContextTurns] = useState(2);
+  const [speakerLabels, setSpeakerLabels] = useState(true);
+  const [contextGapSeconds, setContextGapSeconds] = useState(0.4);
+  const [readerWeight, setReaderWeight] = useState(0);
+  const [disabledEmo, setDisabledEmo] = useState<Set<string>>(new Set());
+  const [emoWarn, setEmoWarn] = useState("");
+  const [showOptimizer, setShowOptimizer] = useState(true);
+  const [autoDisableUndetected, setAutoDisableUndetected] = useState(true);
+  const [postProcess, setPostProcess] = useState<PostProcessConfig>({
+    postprocess_enabled: false,
+    decay_rate: 0,
+    gradient_sudden_threshold: 0.4,
+    gradient_gradual_window: 3,
+    gradient_gradual_max_delta: 0.15,
+  });
 
-  // Sync draft when opening or when the upstream value changes
+  function loadSettings() {
+    setDraft(exePath);
+    setSavedMsg("");
+    setModelSavedMsg("");
+    getAppVersion().then(setVersion).catch(() => setVersion(""));
+    api
+      .autoLoadConfig()
+      .then((cfg) => {
+        const s = cfg.settings || {};
+        setEmotionModel((s.emotion_model as string) || "local");
+        setLlmApiKey((s.llm_api_key as string) || "");
+        setContextTurns(typeof s.context_turns === "number" ? (s.context_turns as number) : 2);
+        setSpeakerLabels(s.context_speaker_labels !== false);
+        setContextGapSeconds(typeof s.context_gap_seconds === "number" ? (s.context_gap_seconds as number) : 0.4);
+        setReaderWeight(typeof s.reader_weight === "number" ? (s.reader_weight as number) : 0);
+        setDisabledEmo(new Set(Array.isArray(s.disabled_emotions) ? (s.disabled_emotions as string[]) : []));
+        setEmoWarn("");
+        setAutoDisableUndetected(s.auto_disable_undetected !== false);
+        setShowOptimizer(s.show_optimizer_on_load !== false);
+        setPostProcess({
+          postprocess_enabled: (s.postprocess_enabled as boolean) ?? false,
+          decay_rate: (s.decay_rate as number) ?? 0,
+          gradient_sudden_threshold: (s.gradient_sudden_threshold as number) ?? 0.4,
+          gradient_gradual_window: (s.gradient_gradual_window as number) ?? 3,
+          gradient_gradual_max_delta: (s.gradient_gradual_max_delta as number) ?? 0.15,
+        });
+      })
+      .catch(() => {});
+  }
+
+  // Sync when opening or when the upstream value changes
   useEffect(() => {
-    if (open) {
-      setDraft(exePath);
-      setSavedMsg("");
-      setModelSavedMsg("");
-      getAppVersion().then(setVersion).catch(() => setVersion(""));
-      // Load current model/key from saved config.
-      api
-        .autoLoadConfig()
-        .then((cfg) => {
-          setEmotionModel((cfg.settings?.emotion_model as string) || "local");
-          setLlmApiKey((cfg.settings?.llm_api_key as string) || "");
-        })
-        .catch(() => {});
-    }
+    if (open) loadSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, exePath]);
+
+  // 「詳細設定」ボタン等からの直接遷移（CustomEvent: open-settings, detail.section）。
+  useEffect(() => {
+    function onOpen(e: Event) {
+      const detail = (e as CustomEvent).detail as { section?: Section } | undefined;
+      setSection(detail?.section || "general");
+      setOpen(true);
+    }
+    window.addEventListener("open-settings", onOpen as EventListener);
+    return () => window.removeEventListener("open-settings", onOpen as EventListener);
+  }, []);
 
   async function handleBrowse() {
     const picked = await pickExePath();
     if (picked) setDraft(picked);
   }
 
+  function toggleEmotion(key: string, enabled: boolean) {
+    setDisabledEmo((prev) => {
+      const next = new Set(prev);
+      if (enabled) {
+        next.delete(key);
+      } else {
+        next.add(key);
+        if (SPILLOVER_EMOTIONS.has(key)) {
+          setEmoWarn(
+            "「嫌悪／恐れ」を無効にすると、これらに由来する 怒り・驚き・哀 への補助信号も無くなり、それらの検出がわずかに下がる場合があります。"
+          );
+        }
+      }
+      return next;
+    });
+  }
+
   async function handleSaveModel() {
     setModelSaving(true);
     setModelSavedMsg("");
     try {
-      await api.updateSettings({ emotion_model: emotionModel, llm_api_key: llmApiKey.trim() });
-      setModelSavedMsg("保存しました");
+      await api.updateSettings({
+        emotion_model: emotionModel,
+        llm_api_key: llmApiKey.trim(),
+        context_turns: contextTurns,
+        context_speaker_labels: speakerLabels,
+        context_gap_seconds: contextGapSeconds,
+        reader_weight: readerWeight,
+        disabled_emotions: Array.from(disabledEmo),
+        auto_disable_undetected: autoDisableUndetected,
+        show_optimizer_on_load: showOptimizer,
+      });
+      setModelSavedMsg("保存しました（再分析で反映）");
     } catch (e) {
       setModelSavedMsg(`保存に失敗しました: ${(e as Error).message}`);
     } finally {
@@ -81,15 +226,16 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
     }
   }
 
+  const h3 = { fontFamily: "var(--font-display)", fontSize: "0.95rem", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" } as React.CSSProperties;
+
   return (
     <>
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => { setSection("general"); setOpen(true); }}
         className="btn-ghost"
         title="設定"
         style={{ fontSize: "0.95rem", color: "var(--text-muted)", padding: "4px 8px", lineHeight: 1 }}
       >
-        {/* gear icon */}
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" style={{ verticalAlign: "-3px" }}>
           <circle cx="12" cy="12" r="3" />
           <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
@@ -102,128 +248,276 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
           style={{ background: "#000000b0", backdropFilter: "blur(8px)" }}
           onClick={(e) => e.target === e.currentTarget && setOpen(false)}
         >
-          <div className="panel w-full max-w-3xl max-h-[85vh] overflow-y-auto p-8 animate-fadeIn" style={{ background: "var(--bg-panel)" }}>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="display-text" style={{ fontFamily: "var(--font-display)", fontSize: "1.25rem", fontWeight: 600, color: "var(--accent)" }}>
+          <div className="panel w-full max-w-4xl max-h-[85vh] overflow-hidden p-0 animate-fadeIn flex" style={{ background: "var(--bg-panel)" }}>
+            {/* 左ナビ */}
+            <div style={{ width: "172px", flexShrink: 0, borderRight: "1px solid var(--border-dim)", background: "var(--bg-surface)", padding: "20px 10px" }}>
+              <h2 className="display-text" style={{ fontFamily: "var(--font-display)", fontSize: "1.0rem", fontWeight: 700, color: "var(--accent)", padding: "0 8px", marginBottom: "14px" }}>
                 設定
               </h2>
-              <button onClick={() => setOpen(false)} className="btn-ghost" style={{ fontSize: "1.25rem", color: "var(--text-muted)" }}>
-                &times;
-              </button>
+              <nav className="space-y-1">
+                {NAV.map((item) => {
+                  const on = section === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => setSection(item.key)}
+                      className="flex items-center gap-2.5 w-full"
+                      style={{
+                        padding: "8px 10px",
+                        borderRadius: "8px",
+                        border: 0,
+                        cursor: "pointer",
+                        fontSize: "0.82rem",
+                        fontWeight: on ? 700 : 500,
+                        background: on ? "var(--accent-soft)" : "transparent",
+                        color: on ? "var(--accent)" : "var(--text-muted)",
+                        textAlign: "left",
+                      }}
+                    >
+                      {item.icon}
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </nav>
             </div>
 
-            <div className="grid grid-cols-2 gap-8" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
-              {/* 左カラム: YMM4 exe パス */}
-              <div>
-                <h3 style={{ fontFamily: "var(--font-display)", fontSize: "0.95rem", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" }}>
-                  YMM4 の場所
+            {/* 右コンテンツ */}
+            <div className="flex-1 overflow-y-auto p-7" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
+              <div className="flex justify-between items-center mb-5">
+                <h3 className="display-text" style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
+                  {SECTION_TITLE[section]}
                 </h3>
-                <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
-                  YukkuriMovieMaker.exe のパスを指定すると、立ち絵のデフォルト状態を YMM4 の設定から取得してプレビューに反映します。
-                </p>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    placeholder="C:\\...\\YukkuriMovieMaker.exe"
-                    className="input-field flex-1"
-                    style={{ fontSize: "0.78rem" }}
-                  />
-                  <button onClick={handleBrowse} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px", whiteSpace: "nowrap" }}>
-                    参照
-                  </button>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                    {saving ? "保存中..." : "保存"}
-                  </button>
-                  {savedMsg && (
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>
-                  )}
-                </div>
-              </div>
-
-              {/* 右カラム: バージョン情報 / バグ報告 */}
-              <div>
-                <h3 style={{ fontFamily: "var(--font-display)", fontSize: "0.95rem", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" }}>
-                  バージョン情報
-                </h3>
-                <ul className="list-none space-y-1 mb-6" style={{ paddingLeft: 0 }}>
-                  <li style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
-                    YMM4 EmotionMaker KIT
-                  </li>
-                  <li className="mono-text" style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>
-                    v{version || "—"}
-                  </li>
-                </ul>
-
-                <h3 style={{ fontFamily: "var(--font-display)", fontSize: "0.95rem", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" }}>
-                  バグ報告
-                </h3>
-                <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
-                  不具合や要望は共通フォームからお寄せください。
-                </p>
-                <button
-                  onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)}
-                  className="btn-secondary"
-                  style={{ fontSize: "0.8rem", padding: "6px 14px" }}
-                >
-                  バグ報告フォームを開く ↗
+                <button onClick={() => setOpen(false)} className="btn-ghost" style={{ fontSize: "1.25rem", color: "var(--text-muted)" }}>
+                  &times;
                 </button>
               </div>
-            </div>
 
-            {/* 感情分析モデル（全幅） */}
-            <div style={{ borderTop: "1px solid var(--border-dim)", marginTop: "24px", paddingTop: "20px", color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
-              <h3 style={{ fontFamily: "var(--font-display)", fontSize: "0.95rem", fontWeight: 600, color: "var(--accent)", marginBottom: "8px" }}>
-                感情分析モデル
-              </h3>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
-                台詞の感情分析に使うモデルを選択します。ローカル (BERT) は無料・オフラインで動作します。LLM を選ぶ場合は対応する API キーが必要です。
-              </p>
-              <div className="flex gap-2 items-center mb-2" style={{ flexWrap: "wrap" }}>
-                <select
-                  value={emotionModel}
-                  onChange={(e) => setEmotionModel(e.target.value)}
-                  className="select-field"
-                  style={{ fontSize: "0.8rem", minWidth: "240px" }}
-                >
-                  {MODEL_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {emotionModel !== "local" && (
-                <div className="mb-2 animate-fadeIn">
-                  <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
-                    {emotionModel === "llm_claude" ? "Anthropic API キー" : "OpenAI API キー"}
-                  </span>
-                  <input
-                    type="password"
-                    value={llmApiKey}
-                    onChange={(e) => setLlmApiKey(e.target.value)}
-                    placeholder={emotionModel === "llm_claude" ? "sk-ant-..." : "sk-..."}
-                    className="input-field w-full"
-                    style={{ fontSize: "0.78rem", maxWidth: "420px" }}
-                    autoComplete="off"
-                  />
+              {section === "general" && (
+                <div>
+                  <h3 style={h3}>YMM4 の場所</h3>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
+                    YukkuriMovieMaker.exe のパスを指定すると、立ち絵のデフォルト状態を YMM4 の設定から取得してプレビューに反映します。
+                  </p>
+                  <div className="flex gap-2 mb-2" style={{ maxWidth: "560px" }}>
+                    <input
+                      type="text"
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      placeholder="C:\\...\\YukkuriMovieMaker.exe"
+                      className="input-field flex-1"
+                      style={{ fontSize: "0.78rem" }}
+                    />
+                    <button onClick={handleBrowse} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px", whiteSpace: "nowrap" }}>
+                      参照
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                      {saving ? "保存中..." : "保存"}
+                    </button>
+                    {savedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>}
+                  </div>
                 </div>
               )}
-              <div className="flex items-center gap-3 mt-2">
-                <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                  {modelSaving ? "保存中..." : "保存"}
-                </button>
-                {modelSavedMsg && (
-                  <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>
-                )}
-              </div>
+
+              {section === "analysis" && (
+                <div>
+                  {/* 自動最適化ウィザードの表示切替 */}
+                  <label className="flex items-center gap-2 cursor-pointer mb-1" style={{ fontSize: "0.82rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={showOptimizer}
+                      onChange={(e) => setShowOptimizer(e.target.checked)}
+                      className="checkbox-custom"
+                    />
+                    <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      プロジェクト読み込み後に感情分析の自動最適化ウィンドウを表示する
+                    </span>
+                  </label>
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-faint)", marginBottom: "16px" }}>
+                    用途に合わせた設問に答えると、文脈・メリハリ・後処理を自動調整して分析します（保存で反映）。
+                  </p>
+
+                  <h3 style={h3}>感情分析モデル</h3>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
+                    台詞の感情分析に使うモデルを選択します。ローカル (BERT) は無料・オフラインで動作します。LLM を選ぶ場合は対応する API キーが必要です。
+                  </p>
+                  <div className="flex gap-2 items-center mb-2" style={{ flexWrap: "wrap" }}>
+                    <select value={emotionModel} onChange={(e) => setEmotionModel(e.target.value)} className="select-field" style={{ fontSize: "0.8rem", minWidth: "240px" }}>
+                      {MODEL_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {emotionModel !== "local" && (
+                    <div className="mb-2 animate-fadeIn">
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        {emotionModel === "llm_claude" ? "Anthropic API キー" : "OpenAI API キー"}
+                      </span>
+                      <input
+                        type="password"
+                        value={llmApiKey}
+                        onChange={(e) => setLlmApiKey(e.target.value)}
+                        placeholder={emotionModel === "llm_claude" ? "sk-ant-..." : "sk-..."}
+                        className="input-field w-full"
+                        style={{ fontSize: "0.78rem", maxWidth: "420px" }}
+                        autoComplete="off"
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-x-6 gap-y-3 mt-4" style={{ maxWidth: "560px" }}>
+                    <div>
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        文脈ターン数
+                        <span className="label-hint">分析時に直前の発話を何件含めるか（0–5、推奨1–2）</span>
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        max={5}
+                        value={contextTurns}
+                        onChange={(e) => setContextTurns(Math.max(0, Math.min(5, parseInt(e.target.value) || 0)))}
+                        className="input-sm"
+                        style={{ width: "72px" }}
+                      />
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 cursor-pointer" style={{ marginTop: "20px" }}>
+                        <input type="checkbox" checked={speakerLabels} onChange={(e) => setSpeakerLabels(e.target.checked)} className="checkbox-custom" />
+                        <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>話者名で文脈を区別する</span>
+                      </label>
+                    </div>
+                    <div>
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        文脈ギャップ（秒）
+                        <span className="label-hint">台詞間にこの長さ以上の無音があると場面の区切りとみなし、文脈・余韻を持ち越さない。0=間を最大限尊重(1F区切り)／大きいほど短い間は無視。FPSでフレーム換算</span>
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.1}
+                        value={contextGapSeconds}
+                        onChange={(e) => setContextGapSeconds(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="input-sm"
+                        style={{ width: "84px" }}
+                      />
+                    </div>
+                    <div></div>
+                    <div className="col-span-2">
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        reader ブレンド: <span className="mono-text">{readerWeight.toFixed(2)}</span>
+                        <span className="label-hint">0=書き手の感情 / 1=視聴者から見た感情。立ち絵の見えに合わせて調整</span>
+                      </span>
+                      <input type="range" min={0} max={1} step={0.05} value={readerWeight} onChange={(e) => setReaderWeight(parseFloat(e.target.value))} style={{ width: "100%", maxWidth: "420px" }} />
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    {/* 検出されない感情を自動OFF（既定ON） */}
+                    <label className="flex items-center gap-2 cursor-pointer mb-2" style={{ fontSize: "0.82rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={autoDisableUndetected}
+                        onChange={(e) => setAutoDisableUndetected(e.target.checked)}
+                        className="checkbox-custom"
+                      />
+                      <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>検出されない感情ラベルを自動OFF</span>
+                    </label>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-faint)", marginBottom: "8px" }}>
+                      ON のとき、分析で出現しなかった感情を自動で無効化します（チェックは自動制御＝編集不可）。OFF にすると手動で選べます。
+                    </p>
+
+                    <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                      検出する感情ラベル
+                      <span className="label-hint">台本に出ない感情を OFF にすると誤検出と複合感情の組合せを減らせます</span>
+                    </span>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1.5" style={{ maxWidth: "560px", opacity: autoDisableUndetected ? 0.55 : 1 }}>
+                      {DETECTABLE_EMOTIONS.map((em) => {
+                        const enabled = !disabledEmo.has(em.key);
+                        return (
+                          <label key={em.key} className="flex items-center gap-1.5" style={{ fontSize: "0.8rem", cursor: autoDisableUndetected ? "default" : "pointer" }}>
+                            <input
+                              type="checkbox"
+                              checked={enabled}
+                              disabled={autoDisableUndetected}
+                              onChange={(e) => toggleEmotion(em.key, e.target.checked)}
+                              className="checkbox-custom"
+                            />
+                            <span style={{ color: enabled ? "var(--text-secondary)" : "var(--text-faint)" }}>
+                              {em.label}
+                              {SPILLOVER_EMOTIONS.has(em.key) && <span style={{ color: "var(--text-faint)" }}> *</span>}
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-faint)", marginTop: "4px" }}>
+                      * 嫌悪・恐れは 怒/驚/哀 の検出を補助しています。
+                    </p>
+                    {!autoDisableUndetected && emoWarn && (
+                      <p className="animate-fadeIn" style={{ fontSize: "0.75rem", color: "var(--gradient-sudden)", marginTop: "4px", lineHeight: 1.6 }}>
+                        ⚠ {emoWarn}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3 mt-4">
+                    <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                      {modelSaving ? "保存中..." : "保存"}
+                    </button>
+                    {modelSavedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>}
+                  </div>
+
+                  {/* 感情後処理（このセクションの最下部） */}
+                  <div style={{ borderTop: "1px solid var(--border-dim)", marginTop: "20px", paddingTop: "16px" }}>
+                    <PostProcessSettings settings={postProcess} onSettingsChange={setPostProcess} />
+                  </div>
+                </div>
+              )}
+
+              {section === "lexicon" && <LexiconPanel />}
+
+              {section === "about" && (
+                <div>
+                  <h3 style={h3}>バージョン情報</h3>
+                  <ul className="list-none space-y-1 mb-6" style={{ paddingLeft: 0 }}>
+                    <li style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>YMM4 EmotionMaker KIT</li>
+                    <li className="mono-text" style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>v{version || "—"}</li>
+                  </ul>
+
+                  <h3 style={h3}>更新内容</h3>
+                  <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.2</p>
+                    <ul className="list-none space-y-1.5" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情分析精度の向上</strong>：話者名で文脈を区別／話し手・視聴者の感情調整（reader ブレンド）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>文脈ギャップ</strong>：無音区間の区切り秒数を追加し、文脈（場面）ごとに感情を分析</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情ラベルを追加</strong>：嫌悪・恐れ・呆れ（呆れは感情辞書の登録内容を元に検出。「まぁ」「えー」などの感動詞を入れると検出されやすくなります）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情辞書を追加</strong>：台詞に特定の語句が含まれるとき指定感情を強める（boost＝加算）／固定する（set）ルール</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>最適化ウィザード</strong>：プロジェクト読み込み時に、プロジェクトに合わせて分析精度を最適化する設問を追加</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>UI レイアウト調整</strong>：プレビュー／個別変更カラムを大型化して左カラムに独立配置、検出キャラクター設定をアイコン化</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個別設定</strong>：感情ラベルの手動上書き（感情で指定・強度・パーツ個別変更）を追加</li>
+                    </ul>
+                  </div>
+
+                  <h3 style={h3}>バグ報告</h3>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
+                    不具合や要望は共通フォームからお寄せください。
+                  </p>
+                  <button onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)} className="btn-secondary" style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
+                    バグ報告フォームを開く ↗
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
       )}
     </>
   );
+}
+
+function Dot() {
+  return <span style={{ color: "var(--accent)", marginRight: "8px", fontSize: "0.5rem", verticalAlign: "middle" }}>&#9679;</span>;
 }

@@ -1,13 +1,15 @@
 {
   "name": "ymm4-emotion-maker-kit",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "YMM4 表情アイテム自動配置ツール",
   "author": "blazwel <blazwel@gmail.com>",
   "license": "MIT",
   "main": "electron/main.js",
   "private": true,
   "scripts": {
-    "dev": "electron .",
+    "dev": "node scripts/dev.js",
+    "dev:electron": "electron .",
+    "dev:web": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
     "build:electron": "electron-builder --win",
     "build": "npm run build:frontend && npm run build:electron",
