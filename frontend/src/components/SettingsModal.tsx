@@ -112,6 +112,14 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [emoWarn, setEmoWarn] = useState("");
   const [showOptimizer, setShowOptimizer] = useState(true);
   const [autoDisableUndetected, setAutoDisableUndetected] = useState(true);
+  // 個人適応学習(#1)
+  const [personalizationEnabled, setPersonalizationEnabled] = useState(false);
+  const [personalizationStrength, setPersonalizationStrength] = useState(0.5);
+  const [trainingTotal, setTrainingTotal] = useState<number | null>(null);
+  const [trainingTrainedAt, setTrainingTrainedAt] = useState<number | null>(null);
+  const [trainingAcc, setTrainingAcc] = useState<number | null>(null);
+  const [rebuilding, setRebuilding] = useState(false);
+  const [trainMsg, setTrainMsg] = useState("");
   const [postProcess, setPostProcess] = useState<PostProcessConfig>({
     postprocess_enabled: false,
     decay_rate: 0,
@@ -139,6 +147,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setEmoWarn("");
         setAutoDisableUndetected(s.auto_disable_undetected !== false);
         setShowOptimizer(s.show_optimizer_on_load !== false);
+        setPersonalizationEnabled(s.personalization_enabled === true);
+        setPersonalizationStrength(typeof s.personalization_strength === "number" ? (s.personalization_strength as number) : 0.5);
         setPostProcess({
           postprocess_enabled: (s.postprocess_enabled as boolean) ?? false,
           decay_rate: (s.decay_rate as number) ?? 0,
@@ -146,6 +156,14 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
           gradient_gradual_window: (s.gradient_gradual_window as number) ?? 3,
           gradient_gradual_max_delta: (s.gradient_gradual_max_delta as number) ?? 0.15,
         });
+      })
+      .catch(() => {});
+    api
+      .getTrainingLabels()
+      .then((r) => {
+        setTrainingTotal(r.total);
+        setTrainingTrainedAt(r.head?.trained_at ?? null);
+        setTrainingAcc(r.head?.holdout_acc ?? null);
       })
       .catch(() => {});
   }
@@ -203,12 +221,34 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         disabled_emotions: Array.from(disabledEmo),
         auto_disable_undetected: autoDisableUndetected,
         show_optimizer_on_load: showOptimizer,
+        personalization_enabled: personalizationEnabled,
+        personalization_strength: personalizationStrength,
       });
       setModelSavedMsg("保存しました（再分析で反映）");
     } catch (e) {
       setModelSavedMsg(`保存に失敗しました: ${(e as Error).message}`);
     } finally {
       setModelSaving(false);
+    }
+  }
+
+  async function handleRebuildPersonalization() {
+    setRebuilding(true);
+    setTrainMsg("");
+    try {
+      const r = await api.rebuildPersonalization();
+      if (r.trained) {
+        setTrainingTotal(r.total);
+        setTrainingTrainedAt(Date.now() / 1000);
+        setTrainingAcc(r.holdout_acc ?? null);
+        setTrainMsg(`学習完了：累計 ${r.total} 件${r.holdout_acc != null ? `／概算一致率 ${(r.holdout_acc * 100).toFixed(0)}%` : ""}`);
+      } else {
+        setTrainMsg(r.reason === "insufficient_data" ? "学習データが不足しています（各感情に数件以上）。" : "学習をスキップしました。");
+      }
+    } catch (e) {
+      setTrainMsg(`学習に失敗: ${(e as Error).message}`);
+    } finally {
+      setRebuilding(false);
     }
   }
 
@@ -463,6 +503,46 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     )}
                   </div>
 
+                  {/* 個人適応学習(#1) */}
+                  <div style={{ borderTop: "1px solid var(--border-dim)", marginTop: "20px", paddingTop: "16px" }}>
+                    <label className="flex items-center gap-2 cursor-pointer mb-2" style={{ fontSize: "0.82rem" }}>
+                      <input
+                        type="checkbox"
+                        checked={personalizationEnabled}
+                        onChange={(e) => setPersonalizationEnabled(e.target.checked)}
+                        className="checkbox-custom"
+                      />
+                      <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>個人学習を使う（手ラベルに適応）</span>
+                    </label>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text-faint)", marginBottom: "8px" }}>
+                      初期画面の「学習データ用として読み込み」で台詞にラベルを付け「学習を再構築」すると、以後の分析がそのラベル傾向に寄ります（ローカルBERT時のみ）。
+                    </p>
+                    <div style={{ maxWidth: "420px", opacity: personalizationEnabled ? 1 : 0.55 }}>
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        補正の強さ: <span className="mono-text">{personalizationStrength.toFixed(2)}</span>
+                        <span className="label-hint">大きいほど学習結果を強く反映（データ量でも自動調整）</span>
+                      </span>
+                      <input
+                        type="range" min={0} max={1} step={0.05}
+                        value={personalizationStrength}
+                        disabled={!personalizationEnabled}
+                        onChange={(e) => setPersonalizationStrength(parseFloat(e.target.value))}
+                        style={{ width: "100%", maxWidth: "420px" }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3 mt-2">
+                      <button onClick={handleRebuildPersonalization} disabled={rebuilding} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
+                        {rebuilding ? "学習中…" : "学習を再構築"}
+                      </button>
+                      <span style={{ fontSize: "0.73rem", color: "var(--text-muted)" }}>
+                        累計ラベル {trainingTotal ?? "—"} 件
+                        {trainingTrainedAt ? `／学習済み` : "／未学習"}
+                        {trainingAcc != null && `（概算一致率 ${(trainingAcc * 100).toFixed(0)}%）`}
+                      </span>
+                    </div>
+                    {trainMsg && <p style={{ fontSize: "0.73rem", color: "var(--text-secondary)", marginTop: "4px" }}>{trainMsg}</p>}
+                  </div>
+
                   <div className="flex items-center gap-3 mt-4">
                     <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
                       {modelSaving ? "保存中..." : "保存"}
@@ -489,6 +569,12 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.3</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個人適応学習</strong>：台詞に正解感情をラベル付けして蓄積すると、以後の分析がその傾向に適応します（初期画面の「学習データ用として読み込み」トグルでラベリング画面へ）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>キャラの性格マップ</strong>：キャラを感情価×覚醒度の2軸に配置し、感情の出やすさをキャラごとに方向付け</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個人学習・性格マップ設定</strong>：感情マッピングと同様にアプリ共通設定として保存・復元</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.2</p>
                     <ul className="list-none space-y-1.5" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情分析精度の向上</strong>：話者名で文脈を区別／話し手・視聴者の感情調整（reader ブレンド）</li>

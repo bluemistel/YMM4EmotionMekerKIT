@@ -445,11 +445,17 @@ def generate_template():
                 tmpl_char = template.characters[char_name]
                 if any(v for v in saved_char.emotion_presets.values() if v):
                     tmpl_char.emotion_presets = saved_char.emotion_presets
+                tmpl_char.emotion_intensity_presets = saved_char.emotion_intensity_presets
                 tmpl_char.compound_presets_2 = saved_char.compound_presets_2
                 tmpl_char.compound_presets_3 = saved_char.compound_presets_3
                 tmpl_char.compound_max_score = saved_char.compound_max_score
                 tmpl_char.emotion_parts = saved_char.emotion_parts
+                tmpl_char.gradient_presets = saved_char.gradient_presets
                 tmpl_char.layer_offset = saved_char.layer_offset
+                # キャラ性格マップ(#4)もアプリ共通設定として復元。
+                tmpl_char.persona_valence = saved_char.persona_valence
+                tmpl_char.persona_arousal = saved_char.persona_arousal
+                tmpl_char.persona_strength = saved_char.persona_strength
 
     _state["config"] = template
     auto_save_config(template)
@@ -465,6 +471,12 @@ def update_character_config(req: UpdateCharacterConfigRequest):
 
     char_data = req.config
     cp2 = char_data.get("compound_presets_2", char_data.get("compound_presets", {}))
+    # persona は専用UI(PersonaMap)からのみ更新される。感情マッピング等の保存で
+    # キーが省略された場合は既存値を保持し、誤ってリセットしないようにする。
+    _prev = config.characters.get(req.character_name)
+    _pv = char_data.get("persona_valence", _prev.persona_valence if _prev else 0.0)
+    _pa = char_data.get("persona_arousal", _prev.persona_arousal if _prev else 0.0)
+    _ps = char_data.get("persona_strength", _prev.persona_strength if _prev else 0.0)
     config.characters[req.character_name] = CharacterConfig(
         preset_ini=char_data.get("preset_ini", ""),
         tachie_dir=char_data.get("tachie_dir", ""),
@@ -476,6 +488,9 @@ def update_character_config(req: UpdateCharacterConfigRequest):
         compound_max_score=char_data.get("compound_max_score", 0.65),
         emotion_parts=char_data.get("emotion_parts", {}),
         gradient_presets=char_data.get("gradient_presets", {}),
+        persona_valence=_pv,
+        persona_arousal=_pa,
+        persona_strength=_ps,
     )
     auto_save_config(config)
     return {"status": "updated", "character_name": req.character_name}
@@ -531,6 +546,10 @@ def update_settings(req: UpdateSettingsRequest):
         config.settings.auto_disable_undetected = bool(s["auto_disable_undetected"])
     if "show_optimizer_on_load" in s:
         config.settings.show_optimizer_on_load = bool(s["show_optimizer_on_load"])
+    if "personalization_enabled" in s:
+        config.settings.personalization_enabled = bool(s["personalization_enabled"])
+    if "personalization_strength" in s:
+        config.settings.personalization_strength = max(0.0, min(1.0, float(s["personalization_strength"])))
 
     # 感情分析モデル / LLM API キー。変更時は analyzer キャッシュを破棄して
     # 次回分析で新しいプロバイダ/キーが確実に使われるようにする。
@@ -669,6 +688,67 @@ def update_lexicon(req: LexiconUpdateRequest):
     _state["lexicon"] = entries
     save_lexicon(entries)
     return {"status": "saved", "count": len(entries), "entries": [asdict(e) for e in entries]}
+
+
+# --- Personalized learning (個人適応学習) ---
+
+class TrainingLabelsRequest(BaseModel):
+    # [{text, character?, emotion(None=取消)}]
+    labels: list[dict[str, Any]]
+    source_project: str | None = None
+
+
+def _get_embedding_analyzer():
+    """埋め込み可能なローカル BERT アナライザを返す（無ければ生成）。"""
+    cur = _state.get("analyzer")
+    if cur is not None and hasattr(cur, "embed_batch"):
+        return cur
+    from .emotion.bert_analyzer import BertEmotionAnalyzer
+    config: ProjectConfig | None = _state["config"]
+    model_path = config.settings.model_path if config else "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+    analyzer = BertEmotionAnalyzer(model_path)
+    # ローカルモードなら以後も再利用できるようキャッシュ。
+    if config and config.settings.emotion_model == "local":
+        _state["analyzer"] = analyzer
+    return analyzer
+
+
+@app.get("/api/training/labels")
+def get_training_labels():
+    from . import training_store, personalization
+    return {
+        "counts": training_store.label_counts(),
+        "total": sum(training_store.label_counts().values()),
+        "head": training_store.load_head_meta(),
+        "head_available": personalization.is_available(),
+    }
+
+
+@app.post("/api/training/labels")
+def add_training_labels(req: TrainingLabelsRequest):
+    from . import training_store
+    written = training_store.append_labels(req.labels, source_project=req.source_project)
+    return {"status": "ok", "written": written, "counts": training_store.label_counts()}
+
+
+@app.delete("/api/training/labels")
+def clear_training_labels():
+    from . import training_store, personalization
+    training_store.clear_labels()
+    # ヘッドは残すが、ラベル0なら次回 rebuild で再構築不可になる旨は stats で示す。
+    personalization.invalidate_cache()
+    return {"status": "cleared"}
+
+
+@app.post("/api/training/rebuild")
+def rebuild_personalization():
+    from . import personalization
+    try:
+        analyzer = _get_embedding_analyzer()
+    except Exception as e:
+        raise HTTPException(500, f"モデルの読み込みに失敗しました: {e}")
+    stats = personalization.train(analyzer)
+    return stats
 
 
 # --- Work-state (作業状態) save / load ---
@@ -810,6 +890,28 @@ def analyze_emotions(req: AnalyzeRequest):
     texts = [_target_text(v) for v in voices]
 
     results = analyzer.analyze_batch(texts, contexts)
+
+    # キャラ性格マップ(#4): 各キャラの感情価×覚醒度の事前分布を加算（粗い prior）。
+    # persona_strength=0 のキャラはスキップ。
+    from . import persona_prior
+    for v, e in zip(voices, results):
+        cc = config.characters.get(v.character_name)
+        if cc and cc.persona_strength > 0:
+            persona_prior.apply(e, cc.persona_valence, cc.persona_arousal, cc.persona_strength)
+
+    # 個人適応学習(#1): 学習済みヘッドがあれば、対象行のみの埋め込みからバイアスを加算。
+    # ローカルBERT専用（埋め込みが必要）。LLM 経路では embed_batch が無いのでスキップ。
+    if (
+        config.settings.personalization_enabled
+        and hasattr(analyzer, "embed_batch")
+    ):
+        from . import personalization
+        if personalization.is_available():
+            try:
+                embeddings = analyzer.embed_batch([v.serif for v in voices])
+                personalization.apply(results, embeddings, config.settings.personalization_strength)
+            except Exception:
+                pass  # 個人適応は補助。失敗しても base 結果で続行。
 
     # ユーザー感情辞書（語句→感情）の後段補正。
     lexicon = _state.get("lexicon")
@@ -1218,6 +1320,8 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "personalization_enabled": config.settings.personalization_enabled,
+            "personalization_strength": config.settings.personalization_strength,
         },
         "characters": {
             name: {
@@ -1231,6 +1335,9 @@ def _config_to_dict(config: ProjectConfig) -> dict:
                 "compound_max_score": c.compound_max_score,
                 "emotion_parts": c.emotion_parts,
                 "gradient_presets": c.gradient_presets,
+                "persona_valence": c.persona_valence,
+                "persona_arousal": c.persona_arousal,
+                "persona_strength": c.persona_strength,
             }
             for name, c in config.characters.items()
         },
@@ -1260,6 +1367,8 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        personalization_enabled=settings_raw.get("personalization_enabled", False),
+        personalization_strength=settings_raw.get("personalization_strength", 0.5),
     )
     characters: dict[str, CharacterConfig] = {}
     for name, char_raw in data.get("characters", {}).items():
@@ -1275,6 +1384,9 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
             compound_max_score=char_raw.get("compound_max_score", 0.65),
             emotion_parts=char_raw.get("emotion_parts", {}),
             gradient_presets=char_raw.get("gradient_presets", {}),
+            persona_valence=char_raw.get("persona_valence", 0.0),
+            persona_arousal=char_raw.get("persona_arousal", 0.0),
+            persona_strength=char_raw.get("persona_strength", 0.0),
         )
     return ProjectConfig(settings=settings, characters=characters)
 

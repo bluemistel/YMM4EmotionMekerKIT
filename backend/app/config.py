@@ -21,6 +21,10 @@ class CharacterConfig:
     compound_max_score: float = 0.65
     emotion_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     gradient_presets: dict[str, str] = field(default_factory=dict)
+    # キャラ性格マップ(#4・ゲート機能): 感情価×覚醒度の事前分布。strength=0 で無効。
+    persona_valence: float = 0.0   # -1..1 ネガ⇔ポジ
+    persona_arousal: float = 0.0   # -1..1 落ち着き⇔ハイテンション
+    persona_strength: float = 0.0  # 0=無効
 
     @property
     def default_preset(self) -> str:
@@ -58,6 +62,9 @@ class Settings:
     gradient_gradual_max_delta: float = 0.15
     ymm4_exe_path: str = ""
     llm_api_key: str = ""
+    # 個人適応学習(#1): 学習済みヘッドによる感情補正の有効化と強度。
+    personalization_enabled: bool = False
+    personalization_strength: float = 0.5
 
 
 @dataclass
@@ -96,6 +103,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        personalization_enabled=settings_raw.get("personalization_enabled", False),
+        personalization_strength=settings_raw.get("personalization_strength", 0.5),
     )
 
     characters: dict[str, CharacterConfig] = {}
@@ -113,6 +122,9 @@ def load_config(path: str | Path) -> ProjectConfig:
             compound_max_score=char_raw.get("compound_max_score", 0.65),
             emotion_parts=char_raw.get("emotion_parts", {}),
             gradient_presets=char_raw.get("gradient_presets", {}),
+            persona_valence=char_raw.get("persona_valence", 0.0),
+            persona_arousal=char_raw.get("persona_arousal", 0.0),
+            persona_strength=char_raw.get("persona_strength", 0.0),
         )
 
     return ProjectConfig(settings=settings, characters=characters)
@@ -142,6 +154,8 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "personalization_enabled": config.settings.personalization_enabled,
+            "personalization_strength": config.settings.personalization_strength,
         },
         "characters": {},
     }
@@ -157,6 +171,9 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "compound_max_score": char.compound_max_score,
             "emotion_parts": char.emotion_parts,
             "gradient_presets": char.gradient_presets,
+            "persona_valence": char.persona_valence,
+            "persona_arousal": char.persona_arousal,
+            "persona_strength": char.persona_strength,
         }
 
     path.parent.mkdir(parents=True, exist_ok=True)

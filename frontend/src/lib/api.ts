@@ -57,6 +57,28 @@ export interface VoiceInfo {
   layer: number;
 }
 
+export interface TrainingHeadMeta {
+  total: number;
+  counts: Record<string, number>;
+  holdout_acc: number | null;
+  trained_at: number;
+}
+
+export interface TrainingStatus {
+  counts: Record<string, number>;
+  total: number;
+  head: TrainingHeadMeta | null;
+  head_available: boolean;
+}
+
+export interface TrainingRebuildResult {
+  trained: boolean;
+  reason?: string;
+  total: number;
+  counts: Record<string, number>;
+  holdout_acc?: number | null;
+}
+
 export interface PresetInfo {
   preset_names: string[];
   presets: Record<string, { parts: Record<string, string> }>;
@@ -352,6 +374,26 @@ export const api = {
     );
   },
 
+  // --- 個人適応学習(#1) ---
+  getTrainingLabels() {
+    return request<TrainingStatus>("/api/training/labels");
+  },
+
+  addTrainingLabels(labels: { text: string; character?: string; emotion: string | null }[], sourceProject?: string) {
+    return request<{ status: string; written: number; counts: Record<string, number> }>(
+      "/api/training/labels",
+      { method: "POST", body: JSON.stringify({ labels, source_project: sourceProject }) }
+    );
+  },
+
+  clearTrainingLabels() {
+    return request<{ status: string }>("/api/training/labels", { method: "DELETE" });
+  },
+
+  rebuildPersonalization() {
+    return request<TrainingRebuildResult>("/api/training/rebuild", { method: "POST" });
+  },
+
   saveWorkstate(path: string) {
     return request<{ status: string; path: string }>(
       "/api/workstate/save",
@@ -382,7 +424,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.2";
+export const APP_VERSION_FALLBACK = "1.0.3";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

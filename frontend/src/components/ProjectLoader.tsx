@@ -19,6 +19,8 @@ interface Props {
   onExePathChange?: (path: string) => void;
   /** 作業状態ファイル(.ymmemo)を選んで前回の状態を復元する */
   onLoadWorkstate?: () => void;
+  /** 学習データ用としてプロジェクトを読み込み、ラベリング画面へ */
+  onLoadForTraining?: (path: string) => void;
 }
 
 const STEPS: { key: FlowPhase; label: string }[] = [
@@ -36,10 +38,12 @@ const ORDER: Record<FlowPhase, number> = {
   error: -1,
 };
 
-export default function ProjectLoader({ onRunPipeline, phase, message, exePath = "", onExePathChange, onLoadWorkstate }: Props) {
+export default function ProjectLoader({ onRunPipeline, phase, message, exePath = "", onExePathChange, onLoadWorkstate, onLoadForTraining }: Props) {
   const [path, setPath] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [hint, setHint] = useState("");
+  // ON のとき、読み込み（D&D / ファイル選択 / パス入力）を学習データ用ラベリングへ回す。
+  const [trainingLoad, setTrainingLoad] = useState(false);
   const [exeDraft, setExeDraft] = useState(exePath);
   const [exeSaved, setExeSaved] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -70,16 +74,23 @@ export default function ProjectLoader({ onRunPipeline, phase, message, exePath =
     if (picked) await saveExePath(picked);
   }
 
-  function validateAndRun(p: string) {
+  function normalizePath(p: string): string | null {
     const trimmed = p.trim().replace(/^"|"$/g, "");
-    if (!trimmed) return;
+    if (!trimmed) return null;
     if (!trimmed.toLowerCase().endsWith(".ymmp")) {
       setHint(".ymmp ファイルを指定してください");
-      return;
+      return null;
     }
     setHint("");
     setPath(trimmed);
-    onRunPipeline(trimmed);
+    return trimmed;
+  }
+
+  function validateAndRun(p: string) {
+    const t = normalizePath(p);
+    if (!t) return;
+    if (trainingLoad && onLoadForTraining) onLoadForTraining(t);
+    else onRunPipeline(t);
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -162,9 +173,29 @@ export default function ProjectLoader({ onRunPipeline, phase, message, exePath =
             disabled={busy}
             className="btn-secondary"
           >
-            読込んで解析
+            {trainingLoad ? "学習用に読込" : "読込んで解析"}
           </button>
         </div>
+
+        {onLoadForTraining && (
+          <div className="mt-3 flex flex-col items-center gap-1.5">
+            <label className="flex items-center gap-2 cursor-pointer" style={{ fontSize: "0.82rem" }}>
+              <input
+                type="checkbox"
+                checked={trainingLoad}
+                onChange={(e) => setTrainingLoad(e.target.checked)}
+                disabled={busy}
+                className="checkbox-custom"
+              />
+              <span style={{ color: trainingLoad ? "var(--accent)" : "var(--text-secondary)", fontWeight: 600 }}>
+                学習データ用として読み込み（ラベリング）
+              </span>
+            </label>
+            <span style={{ fontSize: "0.72rem", color: "var(--text-faint)" }}>
+              ONのとき、D&D・ファイル選択・パス入力で読み込むと感情分析せず、台詞に正解感情をラベル付けして個人学習データを蓄積します。
+            </span>
+          </div>
+        )}
 
         {onLoadWorkstate && (
           <div className="mt-4 flex flex-col items-center gap-1.5">

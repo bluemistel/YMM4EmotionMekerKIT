@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { api, AnalysisItem, PlacementItem, ProjectInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";
+import { api, AnalysisItem, PlacementItem, ProjectInfo, VoiceInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";
 import HeaderBar from "@/components/HeaderBar";
 import ProjectLoader, { FlowPhase } from "@/components/ProjectLoader";
+import TrainingLabeler from "@/components/TrainingLabeler";
+import PersonaMap from "@/components/PersonaMap";
 import CharacterList from "@/components/CharacterList";
 import MappingPanel from "@/components/MappingPanel";
 import DialogueList from "@/components/DialogueList";
@@ -25,12 +27,17 @@ interface CharacterConfig {
   compound_max_score: number;
   emotion_parts: Record<string, Record<string, string>>;
   gradient_presets: Record<string, string>;
+  persona_valence?: number;
+  persona_arousal?: number;
+  persona_strength?: number;
   preset_names?: string[];
   available_files?: Record<string, string[]>;
 }
 
 export default function Home() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [trainingVoices, setTrainingVoices] = useState<VoiceInfo[] | null>(null);
+  const [trainingProjectName, setTrainingProjectName] = useState("");
   const [configs, setConfigs] = useState<Record<string, CharacterConfig>>({});
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [analysisResults, setAnalysisResults] = useState<Record<string, AnalysisItem> | null>(null);
@@ -142,6 +149,9 @@ export default function Home() {
         compound_max_score: (c.compound_max_score as number) ?? 0.65,
         emotion_parts: (c.emotion_parts as Record<string, Record<string, string>>) || {},
         gradient_presets: (c.gradient_presets as Record<string, string>) || {},
+        persona_valence: (c.persona_valence as number) ?? 0,
+        persona_arousal: (c.persona_arousal as number) ?? 0,
+        persona_strength: (c.persona_strength as number) ?? 0,
         preset_names: presetNames,
         available_files: availableFiles,
       };
@@ -200,6 +210,27 @@ export default function Home() {
       setFlowPhase("error");
       setFlowMessage(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  async function loadForTraining(path: string) {
+    setFlowPhase("loading");
+    setFlowMessage("プロジェクトを読み込んでいます…");
+    try {
+      await api.loadProject(path);
+      const { voices } = await api.getVoices(0);
+      setTrainingVoices(voices);
+      setTrainingProjectName(path.split(/[\\/]/).pop() || path);
+      setFlowPhase("idle");
+      setFlowMessage("");
+    } catch (e) {
+      setFlowPhase("error");
+      setFlowMessage(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function exitTraining() {
+    setTrainingVoices(null);
+    setTrainingProjectName("");
   }
 
   async function handleOptimizerStart(patch: Record<string, unknown>) {
@@ -359,7 +390,13 @@ export default function Home() {
       />
 
       <main className="flex-1 min-h-0">
-        {!project ? (
+        {trainingVoices ? (
+          <TrainingLabeler
+            voices={trainingVoices}
+            projectName={trainingProjectName}
+            onExit={exitTraining}
+          />
+        ) : !project ? (
           <div className="h-full overflow-y-auto px-6 py-5 max-w-[1440px] mx-auto">
             <ProjectLoader
               onRunPipeline={runFullPipeline}
@@ -368,6 +405,7 @@ export default function Home() {
               exePath={ymm4ExePath}
               onExePathChange={setYmm4ExePath}
               onLoadWorkstate={handleLoadWorkstate}
+              onLoadForTraining={loadForTraining}
             />
           </div>
         ) : (
@@ -414,6 +452,14 @@ export default function Home() {
                     disabledEmotions={disabledEmotions}
                   />
                 )}
+
+                <PersonaMap
+                  characters={Object.keys(configs)}
+                  configs={configs}
+                  onConfigChange={handleConfigChange}
+                  selectedCharacter={selectedCharacter}
+                  colors={Object.fromEntries((project.characters || []).map((c) => [c.name, c.color]))}
+                />
               </div>
 
               {/* カラム3: 感情分析結果 + タイムライン */}

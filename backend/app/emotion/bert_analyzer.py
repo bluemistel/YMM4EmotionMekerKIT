@@ -128,3 +128,36 @@ class BertEmotionAnalyzer(EmotionAnalyzer):
         with torch.no_grad():
             all_logits = self.model(**inputs).logits
         return [self._logits_to_emotion(logits) for logits in all_logits]
+
+    def embed_batch(self, texts: list[str], batch_size: int = 32) -> "torch.Tensor":
+        """個人適応ヘッド用の文埋め込み（対象行のみ・文脈なし）を返す。
+
+        学習・推論で同一の特徴量にするため、常に「対象行だけ」を単文符号化し、
+        最終隠れ層を attention_mask で平均プーリングした [N, H] テンソルを返す。
+        文脈は base モデル＋後処理が担うため、ヘッドは語彙/ラベル傾向の補正に専念する。
+        """
+        if not texts:
+            return torch.empty(0)
+        out: list[torch.Tensor] = []
+        for i in range(0, len(texts), batch_size):
+            chunk = texts[i : i + batch_size]
+            enc = self.tokenizer(
+                text=chunk,
+                return_tensors="pt",
+                truncation=True,
+                max_length=512,
+                padding=True,
+            )
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+            with torch.no_grad():
+                hidden = self.model(**enc, output_hidden_states=True).hidden_states[-1]
+            mask = enc["attention_mask"].unsqueeze(-1).type_as(hidden)
+            summed = (hidden * mask).sum(dim=1)
+            counts = mask.sum(dim=1).clamp(min=1e-9)
+            pooled = summed / counts
+            out.append(pooled.cpu())
+        return torch.cat(out, dim=0)
+
+    @property
+    def embedding_dim(self) -> int:
+        return int(getattr(self.model.config, "hidden_size", 768))
