@@ -22,6 +22,10 @@ interface Props {
   /** 指定すると拡大率・表示位置をこのキーで保持し、台詞（プリセット）切替でも
    *  リセットしない（ダブルクリックでリセットは可能）。 */
   viewKey?: string;
+  /** PSD立ち絵モード。サーバ側で合成した1枚のPNGを表示する。 */
+  psd?: boolean;
+  /** PSDレイヤーのパーツ個別変更デルタ（レイヤーID→表示/非表示）。psd 時のみ有効。 */
+  psdLayerOverrides?: Record<string, boolean>;
 }
 
 // viewKey ごとにズーム状態を保持する（インスタンス再マウント・プリセット変更を跨ぐ）。
@@ -64,9 +68,12 @@ export default function PresetPreview({
   showPartsList = true,
   large = false,
   viewKey,
+  psd = false,
+  psdLayerOverrides,
 }: Props) {
   const [merged, setMerged] = useState<PresetPreviewInfo | null>(null);
   const [presetOnly, setPresetOnly] = useState<PresetPreviewInfo | null>(null);
+  const [psdPath, setPsdPath] = useState<string | null>(null);
   const [error, setError] = useState("");
   // Cursor-anchored zoom: scale + translation (px, relative to the box).
   const [view, setView] = useState(() =>
@@ -88,6 +95,7 @@ export default function PresetPreview({
 
   // Serialize overrideParts for a stable effect dependency
   const overrideKey = JSON.stringify(overrideParts || {});
+  const psdOverrideKey = JSON.stringify(psdLayerOverrides || {});
 
   // Reset zoom AND blank the image only when the previewed preset/character
   // changes — NOT when part overrides change. Keeping the previous image during
@@ -100,6 +108,20 @@ export default function PresetPreview({
     setMerged(null);
     setPresetOnly(null);
   }, [characterName, presetName, basePresetName]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // PSD: サーバ合成PNGのパスを取得する。preset/レイヤーデルタ変更で再取得。
+  useEffect(() => {
+    if (!psd || !characterName) return;
+    let alive = true;
+    api
+      .psdPreview(characterName, {
+        preset_name: presetName || null,
+        psd_layer_overrides: psdLayerOverrides && Object.keys(psdLayerOverrides).length ? psdLayerOverrides : undefined,
+      })
+      .then((r) => { if (alive) setPsdPath(r.path); })
+      .catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [psd, characterName, presetName, psdOverrideKey, settingsTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetZoom() {
     setView({ scale: 1, tx: 0, ty: 0 });
@@ -142,7 +164,7 @@ export default function PresetPreview({
     }
     box.addEventListener("wheel", onWheel, { passive: false });
     return () => box.removeEventListener("wheel", onWheel);
-  }, [zoomable, merged]);
+  }, [zoomable, merged, psdPath]);
 
   // Drag-to-pan: window-level move/up listeners are only attached while a drag
   // is in progress, anchored from the mousedown position + the base translation.
@@ -197,6 +219,7 @@ export default function PresetPreview({
   }, []);
 
   useEffect(() => {
+    if (psd) return; // PSD は専用エフェクトで取得
     if (!characterName || !presetName) return;
 
     // Final composite (YMM4 default + base + preset + part overrides),
@@ -222,9 +245,9 @@ export default function PresetPreview({
   }, [characterName, presetName, basePresetName, overrideKey, settingsTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (error) return <p style={{ color: "var(--em-anger)", fontSize: "0.8125rem" }}>{error}</p>;
-  if (!merged) return null;
+  if (!psd && !merged) return null;
 
-  const mergedParts: Record<string, string | null> = merged.parts;
+  const mergedParts: Record<string, string | null> = merged?.parts || {};
   const activeParts = Object.entries(mergedParts).filter(([, v]) => v !== null);
   // フィールドが現在プリセット由来またはパーツ個別変更由来（=表情アイテム）かを示す
   const overriddenFields = new Set<string>([
@@ -283,9 +306,20 @@ export default function PresetPreview({
               willChange: "transform",
             }}
           >
-            {/* RENDER_ORDER は前面→背面の順（Etc1 が最前面、Back3 が最背面）。
-                CSS z-index は大きいほど前面なので、先頭ほど高い z を割り当てる。 */}
-            {RENDER_ORDER.map((field, i) => {
+            {psd ? (
+              // PSD: サーバ側で合成した1枚を表示する。
+              psdPath && (
+                <img
+                  src={api.presetImageUrl(psdPath)}
+                  alt={presetName}
+                  className="absolute inset-0 w-full h-full object-contain"
+                  draggable={false}
+                />
+              )
+            ) : (
+            /* RENDER_ORDER は前面→背面の順（Etc1 が最前面、Back3 が最背面）。
+                CSS z-index は大きいほど前面なので、先頭ほど高い z を割り当てる。 */
+            RENDER_ORDER.map((field, i) => {
               const path = mergedParts[field];
               if (!path) return null;
               return (
@@ -298,9 +332,9 @@ export default function PresetPreview({
                   draggable={false}
                 />
               );
-            })}
+            }))}
           </div>
-          {activeParts.length === 0 && (
+          {!psd && activeParts.length === 0 && (
             <div className="flex items-center justify-center h-full" style={{ color: "var(--text-faint)", fontSize: "0.8125rem" }}>
               パーツなし
             </div>
@@ -325,7 +359,7 @@ export default function PresetPreview({
           )}
         </div>
 
-        {showPartsList && (
+        {showPartsList && !psd && (
         <div className="flex-1 space-y-1.5">
           <h3 style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "8px", letterSpacing: "0.05em" }}>パーツ一覧</h3>
           {activeParts.map(([field, path]) => {

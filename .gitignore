@@ -28,6 +28,10 @@ backend/data/config.yaml
 backend/data/*.yaml
 # プロジェクト別の手動ラベル（精度測定用のユーザーデータ）
 backend/data/labels/
+# 個人適応学習データ（ユーザーのラベル・学習済みヘッド）
+backend/data/training/
+# PSD立ち絵の合成キャッシュ（著作物を含みうるためコミット禁止）
+backend/data/psd_cache/
 # 作業状態ファイル（設定一式・API キーを含みうる）
 *.ymmemo
 # 環境変数・認証情報

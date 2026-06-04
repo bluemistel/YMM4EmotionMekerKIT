@@ -11,6 +11,9 @@ import yaml
 class CharacterConfig:
     preset_ini: str = ""
     tachie_dir: str = ""
+    # 立ち絵規格: "png"（パーツ画像）/ "psd"（PSD立ち絵）。psd のとき psd_path を使う。
+    tachie_type: str = "png"
+    psd_path: str = ""
     layer_offset: int = 1
     emotion_presets: dict[str, str] = field(default_factory=dict)
     # 単独感情の強度別プリセット: 感情 → {"weak": プリセット, "strong": プリセット}。
@@ -114,6 +117,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         characters[name] = CharacterConfig(
             preset_ini=char_raw.get("preset_ini", ""),
             tachie_dir=char_raw.get("tachie_dir", ""),
+            tachie_type=char_raw.get("tachie_type", "png"),
+            psd_path=char_raw.get("psd_path", ""),
             layer_offset=char_raw.get("layer_offset", 1),
             emotion_presets=char_raw.get("emotion_presets", {}),
             emotion_intensity_presets=char_raw.get("emotion_intensity_presets", {}),
@@ -163,6 +168,8 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
         data["characters"][name] = {
             "preset_ini": char.preset_ini,
             "tachie_dir": char.tachie_dir,
+            "tachie_type": char.tachie_type,
+            "psd_path": char.psd_path,
             "layer_offset": char.layer_offset,
             "emotion_presets": char.emotion_presets,
             "emotion_intensity_presets": char.emotion_intensity_presets,
@@ -206,22 +213,37 @@ def generate_template_config(
     character_names: list[str],
     preset_names_per_character: dict[str, list[str]],
     tachie_dirs: dict[str, str],
+    tachie_types: dict[str, str] | None = None,
+    psd_paths: dict[str, str] | None = None,
 ) -> ProjectConfig:
+    tachie_types = tachie_types or {}
+    psd_paths = psd_paths or {}
     characters: dict[str, CharacterConfig] = {}
     for name in character_names:
         presets = preset_names_per_character.get(name, [])
-        tachie_dir = tachie_dirs.get(name, "")
-        preset_ini = str(Path(tachie_dir) / "preset.ini") if tachie_dir else ""
+        ttype = tachie_types.get(name, "png")
+        psd_path = psd_paths.get(name, "")
+        if ttype == "psd":
+            tachie_dir = ""
+            preset_ini = ""
+        else:
+            tachie_dir = tachie_dirs.get(name, "")
+            preset_ini = str(Path(tachie_dir) / "preset.ini") if tachie_dir else ""
 
         default_preset = ""
-        for p in presets:
-            if "通常" in p:
-                default_preset = p
+        for token in ("通常", "デフォ", "ノーマル", "素"):
+            for p in presets:
+                if token in p:
+                    default_preset = p
+                    break
+            if default_preset:
                 break
 
         characters[name] = CharacterConfig(
             preset_ini=preset_ini,
             tachie_dir=tachie_dir,
+            tachie_type=ttype,
+            psd_path=psd_path,
             emotion_presets={
                 "joy": "",
                 "anger": "",

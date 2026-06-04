@@ -19,6 +19,8 @@ import type { PostProcessConfig } from "@/components/PostProcessSettings";
 interface CharacterConfig {
   preset_ini: string;
   tachie_dir: string;
+  tachie_type?: string;
+  psd_path?: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
   emotion_intensity_presets: Record<string, Record<string, string>>;
@@ -127,9 +129,19 @@ export default function Home() {
       const c = raw as Record<string, unknown>;
       const presetIni = c.preset_ini as string;
       const tachieDir = c.tachie_dir as string;
+      const tachieType = (c.tachie_type as string) || "png";
+      const psdPath = (c.psd_path as string) || "";
       let presetNames: string[] = [];
       let availableFiles: Record<string, string[]> = {};
-      if (presetIni) {
+      if (tachieType === "psd") {
+        // PSD立ち絵: プリセット名は -ymm.json 由来（tree エンドポイントから取得）。
+        try {
+          const res = await api.getPsdLayerTree(name);
+          presetNames = res.preset_names;
+        } catch {
+          // PSD 読込失敗は許容
+        }
+      } else if (presetIni) {
         try {
           const res = await api.loadPreset(name, presetIni, tachieDir);
           presetNames = res.preset_names;
@@ -141,6 +153,8 @@ export default function Home() {
       newConfigs[name] = {
         preset_ini: presetIni || "",
         tachie_dir: tachieDir || "",
+        tachie_type: tachieType,
+        psd_path: psdPath,
         layer_offset: (c.layer_offset as number) ?? 1,
         emotion_presets: (c.emotion_presets as Record<string, string>) || {},
         emotion_intensity_presets: (c.emotion_intensity_presets as Record<string, Record<string, string>>) || {},
@@ -378,6 +392,9 @@ export default function Home() {
   // the selected line's character.
   const activeCharacter = selectedCharacter || autoHighlightedCharacter;
   const activeConfig = activeCharacter ? configs[activeCharacter] : null;
+  const activeCharMeta = activeCharacter
+    ? project?.characters.find((c) => c.name === activeCharacter) || null
+    : null;
 
   return (
     <div className="flex flex-col" style={{ height: "100vh" }}>
@@ -416,6 +433,8 @@ export default function Home() {
             presetNames={activeConfig?.preset_names || []}
             availableFiles={activeConfig?.available_files || {}}
             basePresetName={activeConfig?.emotion_presets?.default}
+            tachieType={activeCharMeta?.tachie_type || "png"}
+            psdPath={activeCharMeta?.psd_path ?? null}
             onOverrideChange={refreshResolution}
           >
             <div className="h-full grid grid-cols-12 gap-4 px-6 py-5 max-w-[1880px] mx-auto">

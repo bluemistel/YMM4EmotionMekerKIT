@@ -20,6 +20,8 @@ const ALL_EMOTIONS = [
 interface CharacterConfig {
   preset_ini: string;
   tachie_dir: string;
+  tachie_type?: string;
+  psd_path?: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
   emotion_intensity_presets: Record<string, Record<string, string>>;
@@ -59,12 +61,14 @@ function PresetSelect({
   presetNames,
   characterName,
   basePresetName,
+  psd = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   presetNames: string[];
   characterName: string;
   basePresetName?: string;
+  psd?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2 flex-1">
@@ -85,6 +89,7 @@ function PresetSelect({
           characterName={characterName}
           presetName={value}
           basePresetName={basePresetName}
+          psd={psd}
         />
       )}
     </div>
@@ -267,6 +272,7 @@ export default function EmotionMapping({
   }
 
   const basePresetName = config.emotion_presets.default;
+  const isPsd = config.tachie_type === "psd";
 
   return (
     <div>
@@ -359,6 +365,7 @@ export default function EmotionMapping({
                   presetNames={presetNames}
                   characterName={characterName}
                   basePresetName={basePresetName}
+                  psd={isPsd}
                 />
               </div>
 
@@ -387,6 +394,7 @@ export default function EmotionMapping({
                           presetNames={presetNames}
                           characterName={characterName}
                           basePresetName={basePresetName}
+                          psd={isPsd}
                         />
                       </div>
                     );
@@ -420,6 +428,7 @@ export default function EmotionMapping({
                             presetNames={presetNames}
                             characterName={characterName}
                             basePresetName={basePresetName}
+                            psd={isPsd}
                           />
                         </div>
 
@@ -445,6 +454,7 @@ export default function EmotionMapping({
                                     presetNames={presetNames}
                                     characterName={characterName}
                                     basePresetName={basePresetName}
+                                    psd={isPsd}
                                   />
                                 </div>
                               );

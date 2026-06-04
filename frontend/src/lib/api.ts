@@ -42,7 +42,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export interface ProjectInfo {
   path: string;
-  characters: { name: string; tachie_directory: string | null; voice_layer: number | null; color: string | null }[];
+  characters: { name: string; tachie_directory: string | null; voice_layer: number | null; color: string | null; tachie_type?: string; psd_path?: string | null }[];
   voice_count: number;
   video_info: Record<string, number>;
   timeline_count: number;
@@ -144,6 +144,28 @@ export interface OverrideInfo {
   hold_previous?: boolean;
   emotion_labels?: string[] | null;
   emotion_tier?: string | null;
+  psd_layer_overrides?: Record<string, boolean> | null;
+}
+
+export interface PsdLayerNode {
+  id: string;
+  name: string;
+  is_folder: boolean;
+  base_visible: boolean;
+  children: PsdLayerNode[];
+}
+
+export interface PsdTreeInfo {
+  tree: PsdLayerNode[];
+  preset_names: string[];
+  all_layer_ids: string[];
+}
+
+export interface PsdPreviewInfo {
+  preset_name: string | null;
+  base_layers: string[];
+  enable_layers: string[];
+  path: string;
 }
 
 export interface LexiconEntry {
@@ -226,6 +248,30 @@ export const api = {
 
   presetImageUrl(path: string) {
     return `${getApiBase()}/api/preset/image?path=${encodeURIComponent(path)}`;
+  },
+
+  // --- PSD立ち絵 ---
+  getPsdLayerTree(characterName: string) {
+    return request<PsdTreeInfo>(`/api/psd/${encodeURIComponent(characterName)}/tree`);
+  },
+
+  /** プリセット名＋レイヤーデルタ → 最終 EnableLayers と合成PNGパス。 */
+  psdPreview(
+    characterName: string,
+    body: { preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<PsdPreviewInfo>(`/api/psd/${encodeURIComponent(characterName)}/preview`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** 明示的な EnableLayers 集合を合成して PNG パスを返す（ソロ/スクロール後）。 */
+  psdRender(characterName: string, enableLayers: string[]) {
+    return request<{ enable_layers: string[]; path: string }>(
+      `/api/psd/${encodeURIComponent(characterName)}/render`,
+      { method: "POST", body: JSON.stringify({ enable_layers: enableLayers }) }
+    );
   },
 
   generateTemplate() {
@@ -329,7 +375,7 @@ export const api = {
     );
   },
 
-  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string }) {
+  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
     return request<{ status: string }>(
       `/api/override/${voiceIndex}`,
       {
@@ -424,7 +470,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.3";
+export const APP_VERSION_FALLBACK = "1.0.4";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

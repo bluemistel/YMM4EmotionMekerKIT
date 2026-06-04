@@ -8,6 +8,7 @@ interface Props {
   presetName: string;
   basePresetName?: string | null;
   label?: string;
+  psd?: boolean;
 }
 
 const POPOVER_W = 360;
@@ -19,6 +20,7 @@ export default function PresetHoverButton({
   presetName,
   basePresetName,
   label = "preview",
+  psd = false,
 }: Props) {
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   const hideTimer = useRef<number | null>(null);
@@ -87,6 +89,7 @@ export default function PresetHoverButton({
             characterName={characterName}
             presetName={presetName}
             basePresetName={basePresetName}
+            psd={psd}
             zoomable
             viewKey="hover-preview"
           />

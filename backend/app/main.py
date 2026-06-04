@@ -23,7 +23,7 @@ from .config import (
     save_config,
 )
 from .expression_mapper import ExpressionMapper
-from .face_item_builder import build_tachie_face_item
+from .face_item_builder import build_psd_face_item, build_tachie_face_item
 from .grouping import (
     DialogueGroup,
     build_group_contexts,
@@ -40,6 +40,7 @@ from .preset_loader import (
     load_preset_ini,
     resolve_part_path,
 )
+from .psd_loader import load_psd_tachie
 from .ymm4_settings import get_default_tachie_parts
 from .timing_engine import FacePlacement, compute_face_placements
 from .ymmp_parser import CharacterInfo, VoiceItem, YmmpProject
@@ -78,6 +79,8 @@ _state: dict[str, Any] = {
     "config": None,
     "config_path": None,
     "presets": {},
+    # PSD立ち絵: character_name -> PsdTachie（PNG の "presets" と並列）。
+    "psd": {},
     "analyzer": None,
     "analysis_results": {},
     "placements": {},
@@ -142,6 +145,9 @@ class OverrideRequest(BaseModel):
     emotion_labels: list[str] | None = None
     # 第1感情のみ選択時の強度（"weak"/"mid"/"strong"）。複数選択時は無視。
     emotion_tier: str | None = None
+    # PSD立ち絵のパーツ個別変更: レイヤーID -> 強制表示(True)/強制非表示(False) のデルタ。
+    # プリセット基準集合に重ねて適用する（プリセット変更に追従）。
+    psd_layer_overrides: dict[str, bool] | None = None
 
 class WorkstateSaveRequest(BaseModel):
     path: str
@@ -176,7 +182,7 @@ def _project_info_dict(project: YmmpProject, timeline_index: int = 0) -> dict:
     return {
         "path": str(project.path),
         "characters": [
-            {"name": c.name, "tachie_directory": c.tachie_directory, "voice_layer": c.voice_layer, "color": c.color}
+            {"name": c.name, "tachie_directory": c.tachie_directory, "voice_layer": c.voice_layer, "color": c.color, "tachie_type": c.tachie_type, "psd_path": c.psd_path}
             for c in characters
         ],
         "voice_count": len(voices),
@@ -194,7 +200,7 @@ def get_characters():
     voice_names = project.get_character_names_from_voices()
     return {
         "characters": [
-            {"name": c.name, "tachie_directory": c.tachie_directory, "voice_layer": c.voice_layer, "color": c.color}
+            {"name": c.name, "tachie_directory": c.tachie_directory, "voice_layer": c.voice_layer, "color": c.color, "tachie_type": c.tachie_type, "psd_path": c.psd_path}
             for c in characters
         ],
         "voice_character_names": voice_names,
@@ -390,6 +396,72 @@ def post_preset_preview(character_name: str, req: PreviewMergeRequest):
     }
 
 
+# --- PSD立ち絵 endpoints ---
+
+def _get_psd_or_404(character_name: str):
+    psd = _state["psd"].get(character_name)
+    if psd is None:
+        # config に psd_path があれば遅延ロードを試みる。
+        config: ProjectConfig | None = _state["config"]
+        cc = config.get_character(character_name) if config else None
+        psd = _get_psd_for(character_name, cc)
+    if psd is None:
+        raise HTTPException(404, f"No PSD tachie loaded for: {character_name}")
+    return psd
+
+
+class PsdPreviewRequest(BaseModel):
+    preset_name: str | None = None
+    psd_layer_overrides: dict[str, bool] | None = None
+
+
+class PsdRenderRequest(BaseModel):
+    enable_layers: list[str]
+
+
+def _apply_layer_overrides(base: list[str], overrides: dict[str, bool] | None) -> list[str]:
+    layers = set(base)
+    for lid, on in (overrides or {}).items():
+        if on:
+            layers.add(lid)
+        else:
+            layers.discard(lid)
+    return sorted(layers)
+
+
+@app.get("/api/psd/{character_name}/tree")
+def get_psd_tree(character_name: str):
+    psd = _get_psd_or_404(character_name)
+    return {
+        "tree": psd.layer_tree(),
+        "preset_names": psd.get_preset_names(),
+        "all_layer_ids": sorted(psd.all_layer_ids()),
+    }
+
+
+@app.post("/api/psd/{character_name}/preview")
+def psd_preview(character_name: str, req: PsdPreviewRequest):
+    """プリセット名＋レイヤーデルタ → 最終 EnableLayers と合成PNGパスを返す。"""
+    psd = _get_psd_or_404(character_name)
+    base = psd.resolve_layers(req.preset_name)
+    enable = _apply_layer_overrides(base, req.psd_layer_overrides)
+    path = psd.render(enable)
+    return {
+        "preset_name": req.preset_name,
+        "base_layers": base,
+        "enable_layers": enable,
+        "path": str(path),
+    }
+
+
+@app.post("/api/psd/{character_name}/render")
+def psd_render(character_name: str, req: PsdRenderRequest):
+    """明示的な EnableLayers 集合を合成して PNG パスを返す（ソロ/スクロール後のライブ更新用）。"""
+    psd = _get_psd_or_404(character_name)
+    path = psd.render(req.enable_layers)
+    return {"enable_layers": sorted(set(req.enable_layers)), "path": str(path)}
+
+
 # --- Config endpoints ---
 
 @app.post("/api/config/save")
@@ -423,8 +495,20 @@ def generate_template():
 
     preset_names_per_char: dict[str, list[str]] = {}
     tachie_dirs: dict[str, str] = {}
+    tachie_types: dict[str, str] = {}
+    psd_paths: dict[str, str] = {}
     for c in characters:
-        if c.name in voice_names and c.tachie_directory:
+        if c.name not in voice_names:
+            continue
+        if c.tachie_type == "psd" and c.psd_path:
+            # PSD立ち絵: .psd を psd_loader でパースし、-ymm.json のプリセット名を採用。
+            tachie_types[c.name] = "psd"
+            psd_paths[c.name] = c.psd_path
+            if Path(c.psd_path).exists():
+                psd = load_psd_tachie(c.psd_path)
+                preset_names_per_char[c.name] = psd.get_preset_names()
+                _state["psd"][c.name] = psd
+        elif c.tachie_directory:
             tachie_dirs[c.name] = c.tachie_directory
             ini_path = Path(c.tachie_directory) / "preset.ini"
             if ini_path.exists():
@@ -432,7 +516,9 @@ def generate_template():
                 preset_names_per_char[c.name] = col.get_preset_names()
                 _state["presets"][c.name] = col
 
-    template = generate_template_config(voice_names, preset_names_per_char, tachie_dirs)
+    template = generate_template_config(
+        voice_names, preset_names_per_char, tachie_dirs, tachie_types, psd_paths
+    )
 
     # Merge with saved config if available
     saved = auto_load_config()
@@ -477,9 +563,15 @@ def update_character_config(req: UpdateCharacterConfigRequest):
     _pv = char_data.get("persona_valence", _prev.persona_valence if _prev else 0.0)
     _pa = char_data.get("persona_arousal", _prev.persona_arousal if _prev else 0.0)
     _ps = char_data.get("persona_strength", _prev.persona_strength if _prev else 0.0)
+    # tachie_type/psd_path はプロジェクト由来。感情マッピング保存等でキーが省略された
+    # 場合は既存値を保持して PSD 判定が消えないようにする。
+    _tt = char_data.get("tachie_type", _prev.tachie_type if _prev else "png")
+    _pp = char_data.get("psd_path", _prev.psd_path if _prev else "")
     config.characters[req.character_name] = CharacterConfig(
         preset_ini=char_data.get("preset_ini", ""),
         tachie_dir=char_data.get("tachie_dir", ""),
+        tachie_type=_tt,
+        psd_path=_pp,
         layer_offset=char_data.get("layer_offset", 1),
         emotion_presets=char_data.get("emotion_presets", {}),
         emotion_intensity_presets=char_data.get("emotion_intensity_presets", {}),
@@ -657,6 +749,7 @@ def set_override(voice_index: int, req: OverrideRequest):
         "hold_previous": req.hold_previous,
         "emotion_labels": req.emotion_labels,
         "emotion_tier": req.emotion_tier,
+        "psd_layer_overrides": req.psd_layer_overrides,
     }
     return {"status": "set", "voice_index": voice_index}
 
@@ -1060,14 +1153,28 @@ def execute(req: ExecuteRequest):
     for p in all_placements:
         char_config = config.characters.get(p.character_name, CharacterConfig())
         layer = p.voice_layer + char_config.layer_offset
-        item = build_tachie_face_item(
-            character_name=p.character_name,
-            frame=p.frame,
-            length=p.length,
-            layer=layer,
-            parts=p.parts,
-            remark=f"[Auto] {p.preset_name}",
-        )
+        if isinstance(p.parts, dict) and "__psd_layers__" in p.parts:
+            # PSD立ち絵: PsdTachieFaceParameter（EnableLayers）で書き出す。
+            item = build_psd_face_item(
+                character_name=p.character_name,
+                frame=p.frame,
+                length=p.length,
+                layer=layer,
+                psd_path=char_config.psd_path,
+                enable_layers=p.parts["__psd_layers__"],
+                eye_animation=p.parts.get("EyeAnimation", "Default"),
+                mouth_animation=p.parts.get("MouthAnimation", "Default"),
+                remark=f"[Auto] {p.preset_name}",
+            )
+        else:
+            item = build_tachie_face_item(
+                character_name=p.character_name,
+                frame=p.frame,
+                length=p.length,
+                layer=layer,
+                parts=p.parts,
+                remark=f"[Auto] {p.preset_name}",
+            )
         face_items.append(item)
 
     # 重複適用を防ぐため、書き出すキャラの既存表情アイテムを除去してから挿入する
@@ -1115,20 +1222,54 @@ def _apply_part_overrides(parts: dict, part_overrides: dict | None, presets) -> 
             parts[field_name] = resolve_part_path(presets.directory, field_name, val)
 
 
-def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None, threshold: float):
+def _get_psd_for(char_name: str, char_config):
+    """PSD立ち絵キャラの PsdTachie を返す（未ロードなら psd_path から遅延ロード）。"""
+    if char_config is None or getattr(char_config, "tachie_type", "png") != "psd":
+        return None
+    psd = _state["psd"].get(char_name)
+    if psd is None and char_config.psd_path and Path(char_config.psd_path).exists():
+        psd = load_psd_tachie(char_config.psd_path)
+        _state["psd"][char_name] = psd
+    return psd
+
+
+def _psd_parts(psd, preset_name: str | None, psd_layer_overrides: dict | None) -> dict:
+    """プリセット基準のレイヤー集合にデルタを重ねた PSD用 parts センチネルを返す。
+
+    timing_engine はこの dict の等価比較で連続結合し、書き出しは "__psd_layers__"
+    の有無で PSD アイテムに分岐する。"""
+    layers = set(psd.resolve_layers(preset_name))
+    for lid, on in (psd_layer_overrides or {}).items():
+        if on:
+            layers.add(lid)
+        else:
+            layers.discard(lid)
+    return {
+        "__psd_layers__": sorted(layers),
+        "EyeAnimation": "Default",
+        "MouthAnimation": "Default",
+    }
+
+
+def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None, threshold: float, psd=None):
     """Single source of truth for per-voice expression resolution.
 
     Returns (slot_key, preset_name, source, parts) where source is one of
     "override" | "gradient" | "mapping". Mirrors the precedence in
     _compute_all_placements exactly so the analyze view and preview/execute
-    never drift.
+    never drift. For PSD立ち絵 (psd is not None) `parts` is a layer sentinel dict.
     """
     part_overrides = (override or {}).get("part_overrides") or {}
+    psd_layer_overrides = (override or {}).get("psd_layer_overrides") or {}
+    is_psd = psd is not None
 
     if override and override.get("preset_name"):
         preset_name = override["preset_name"]
-        parts = presets.resolve_face_params(preset_name)
-        _apply_part_overrides(parts, part_overrides, presets)
+        if is_psd:
+            parts = _psd_parts(psd, preset_name, psd_layer_overrides)
+        else:
+            parts = presets.resolve_face_params(preset_name)
+            _apply_part_overrides(parts, part_overrides, presets)
         return ("override", preset_name, "override", parts)
 
     from .emotion.base import EmotionResult
@@ -1157,8 +1298,11 @@ def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None,
                 for i, lab in enumerate(labels):
                     setattr(synth, lab, max(threshold + 0.01, cap - i * 0.05))
             slot_key, preset_name = mapper.resolve_slot(synth, threshold)
-            parts = mapper.resolve_parts(synth, threshold)
-            _apply_part_overrides(parts, part_overrides, presets)
+            if is_psd:
+                parts = _psd_parts(psd, preset_name, psd_layer_overrides)
+            else:
+                parts = mapper.resolve_parts(synth, threshold)
+                _apply_part_overrides(parts, part_overrides, presets)
             return (slot_key, preset_name, "override", parts)
 
     emotion = EmotionResult(**a["emotion"])
@@ -1175,6 +1319,13 @@ def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None,
             source = "gradient"
             dominant = gradient_dominant(gvalues)
             slot_key = f"gradient_{gtype}:{dominant}" if dominant else f"gradient_{gtype}:"
+
+    if is_psd:
+        parts = _psd_parts(psd, preset_name, psd_layer_overrides)
+        # レイヤーのデルタがあれば [個別] 扱いにする（PNG の part_overrides と同様）。
+        if psd_layer_overrides:
+            source = "override"
+        return (slot_key, preset_name, source, parts)
 
     parts = mapper.resolve_parts(emotion, threshold)
 
@@ -1198,18 +1349,20 @@ def _resolve_for_analysis(config: ProjectConfig, analysis: dict, overrides: dict
         char_name = a.get("character_name")
         char_config = config.characters.get(char_name)
         presets = _state["presets"].get(char_name)
-        if char_config is None or presets is None:
+        psd = _get_psd_for(char_name, char_config)
+        presets_like = psd if psd is not None else presets
+        if char_config is None or presets_like is None:
             a["resolution"] = None
             continue
         mapper = mappers.get(char_name)
         if mapper is None:
-            mapper = ExpressionMapper(char_config, presets)
+            mapper = ExpressionMapper(char_config, presets_like)
             mappers[char_name] = mapper
         override = overrides.get(int(idx)) if str(idx).isdigit() else None
         override = override or overrides.get(str(idx)) or overrides.get(idx)
         try:
             slot_key, preset_name, source, _parts = _resolve_voice(
-                mapper, char_config, presets, a, override, threshold
+                mapper, char_config, presets, a, override, threshold, psd
             )
             a["resolution"] = {
                 "slot_key": slot_key,
@@ -1257,10 +1410,12 @@ def _compute_all_placements(
     for char_name, char_voice_list in char_voices.items():
         char_config = config.characters.get(char_name)
         presets: PresetCollection | None = _state["presets"].get(char_name)
-        if char_config is None or presets is None:
+        psd = _get_psd_for(char_name, char_config)
+        presets_like = psd if psd is not None else presets
+        if char_config is None or presets_like is None:
             continue
 
-        mapper = ExpressionMapper(char_config, presets)
+        mapper = ExpressionMapper(char_config, presets_like)
         threshold = config.settings.emotion_threshold
 
         overrides: dict = _state.get("overrides", {})
@@ -1278,7 +1433,7 @@ def _compute_all_placements(
                 # when there is no previous item (e.g. the first voice).
                 hold_indices.add(v.index)
             _slot, preset_name, _source, parts = _resolve_voice(
-                mapper, char_config, presets, a, override, threshold
+                mapper, char_config, presets, a, override, threshold, psd
             )
             emotion_results[v.index] = (preset_name, parts)
 
@@ -1327,6 +1482,8 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             name: {
                 "preset_ini": c.preset_ini,
                 "tachie_dir": c.tachie_dir,
+                "tachie_type": c.tachie_type,
+                "psd_path": c.psd_path,
                 "layer_offset": c.layer_offset,
                 "emotion_presets": c.emotion_presets,
                 "emotion_intensity_presets": c.emotion_intensity_presets,
@@ -1376,6 +1533,8 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         characters[name] = CharacterConfig(
             preset_ini=char_raw.get("preset_ini", ""),
             tachie_dir=char_raw.get("tachie_dir", ""),
+            tachie_type=char_raw.get("tachie_type", "png"),
+            psd_path=char_raw.get("psd_path", ""),
             layer_offset=char_raw.get("layer_offset", 1),
             emotion_presets=char_raw.get("emotion_presets", {}),
             emotion_intensity_presets=char_raw.get("emotion_intensity_presets", {}),

@@ -569,6 +569,12 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.4</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>PSD立ち絵に対応</strong>：PSD規格の立ち絵（.psd ＋ -ymm.json プリセット）を読み込み、合成プレビューを表示</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>レイヤーでパーツ個別変更</strong>：PSD立ち絵はレイヤーの表示・非表示で調整。クリックで表示切替／中クリックでソロ表示／Ctrl・Shift＋ホイールで兄弟グループ送り（YMM4互換操作）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>感情マッピングは従来どおり</strong>：表情の割り当ては -ymm.json のプリセット登録状況に依存（PNG立ち絵と同じ操作感）</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.3</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個人適応学習</strong>：台詞に正解感情をラベル付けして蓄積すると、以後の分析がその傾向に適応します（初期画面の「学習データ用として読み込み」トグルでラベリング画面へ）</li>

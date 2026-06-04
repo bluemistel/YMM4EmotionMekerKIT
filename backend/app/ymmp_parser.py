@@ -28,6 +28,10 @@ class CharacterInfo:
     tachie_directory: str | None = None
     voice_layer: int | None = None
     color: str | None = None
+    # 立ち絵の規格: "png"（パーツ画像立ち絵）または "psd"（PSD立ち絵）。
+    tachie_type: str = "png"
+    # PSD立ち絵のときの .psd ファイルパス。
+    psd_path: str | None = None
 
 
 class YmmpProject:
@@ -115,15 +119,25 @@ class YmmpProject:
         characters = []
         for char in self.data.get("Characters", []):
             tachie_dir = None
+            tachie_type = "png"
+            psd_path = None
             tcp = char.get("TachieCharacterParameter")
             if tcp:
-                tachie_dir = tcp.get("Directory")
+                ttype = tcp.get("$type", "")
+                if "Psd" in ttype:
+                    # PSD立ち絵: ディレクトリではなく単一の .psd ファイルを参照する。
+                    tachie_type = "psd"
+                    psd_path = tcp.get("FilePath")
+                else:
+                    tachie_dir = tcp.get("Directory")
             color = self._parse_argb_color(char.get("Color"))
             characters.append(CharacterInfo(
                 name=char["Name"],
                 tachie_directory=tachie_dir,
                 voice_layer=char.get("Layer"),
                 color=color,
+                tachie_type=tachie_type,
+                psd_path=psd_path,
             ))
         return characters
 

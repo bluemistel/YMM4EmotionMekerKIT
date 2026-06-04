@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import PresetPreview from "./PresetPreview";
+import PsdLayerPanel from "./PsdLayerPanel";
 import { useOverrideEditor, PART_FIELDS, NONE_PART } from "./OverrideEditorContext";
 
 function basename(p: string | null | undefined): string {
@@ -30,17 +31,20 @@ export default function PreviewPartsPanel() {
     availableFiles,
     basePresetName,
     partOverrides,
+    psdLayerOverrides,
     holdPrevious,
     effectivePreset,
+    tachieType,
     setPart,
   } = useOverrideEditor();
+  const isPsd = tachieType === "psd";
 
   // プリセット標準（ユーザー上書き抜き）の解決パーツを取得して select の標準値に使う。
   const [baseParts, setBaseParts] = useState<Record<string, string | null>>({});
   useEffect(() => {
     let cancelled = false;
     setBaseParts({});
-    if (!characterName || !effectivePreset) return;
+    if (isPsd || !characterName || !effectivePreset) return;
     api
       .getPresetPreviewMerged(characterName, {
         preset_name: effectivePreset,
@@ -86,6 +90,8 @@ export default function PreviewPartsPanel() {
               presetName={effectivePreset}
               basePresetName={basePresetName}
               overrideParts={previewOverrides}
+              psd={isPsd}
+              psdLayerOverrides={isPsd ? psdLayerOverrides : undefined}
               zoomable
               large
               showPartsList={false}
@@ -97,6 +103,9 @@ export default function PreviewPartsPanel() {
             </p>
           )}
 
+          {isPsd ? (
+            <PsdLayerPanel />
+          ) : (
           <div style={{ borderTop: "1px solid var(--border-dim)", paddingTop: "10px" }}>
             <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--text-secondary)" }}>
               パーツ個別変更
@@ -158,6 +167,7 @@ export default function PreviewPartsPanel() {
               })}
             </div>
           </div>
+          )}
         </div>
       )}
     </div>
