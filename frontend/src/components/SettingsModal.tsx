@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, getAppVersion, openExternalUrl, pickExePath } from "@/lib/api";
+import { api, getAppVersion, openExternalUrl, pickExePath, checkLatestVersion, compareSemver, LatestVersionInfo } from "@/lib/api";
 import LexiconPanel from "./LexiconPanel";
 import PostProcessSettings, { PostProcessConfig } from "./PostProcessSettings";
+import EmotionDonut from "./EmotionDonut";
 
 const NOTION_BUG_REPORT_URL =
   "https://ionian-gallimimus-e47.notion.site/32b8c5bf8aa481978f37e470a25e1e01";
@@ -98,6 +99,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState("");
   const [version, setVersion] = useState("");
+  const [latestInfo, setLatestInfo] = useState<LatestVersionInfo | null>(null);
+  const [checkingVersion, setCheckingVersion] = useState(false);
   // 感情分析モデル
   const [emotionModel, setEmotionModel] = useState("local");
   const [llmApiKey, setLlmApiKey] = useState("");
@@ -118,7 +121,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [trainingTotal, setTrainingTotal] = useState<number | null>(null);
   const [trainingTrainedAt, setTrainingTrainedAt] = useState<number | null>(null);
   const [trainingAcc, setTrainingAcc] = useState<number | null>(null);
+  const [trainingCounts, setTrainingCounts] = useState<Record<string, number>>({});
   const [rebuilding, setRebuilding] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [trainMsg, setTrainMsg] = useState("");
   const [postProcess, setPostProcess] = useState<PostProcessConfig>({
     postprocess_enabled: false,
@@ -164,6 +169,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setTrainingTotal(r.total);
         setTrainingTrainedAt(r.head?.trained_at ?? null);
         setTrainingAcc(r.head?.holdout_acc ?? null);
+        setTrainingCounts(r.counts || {});
       })
       .catch(() => {});
   }
@@ -173,6 +179,16 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
     if (open) loadSettings();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, exePath]);
+
+  // バージョン情報タブを開いたとき、GitHub の公開タグと比較して更新有無を確認。
+  useEffect(() => {
+    if (!open || section !== "about") return;
+    setCheckingVersion(true);
+    setLatestInfo(null);
+    checkLatestVersion()
+      .then(setLatestInfo)
+      .finally(() => setCheckingVersion(false));
+  }, [open, section]);
 
   // 「詳細設定」ボタン等からの直接遷移（CustomEvent: open-settings, detail.section）。
   useEffect(() => {
@@ -241,6 +257,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setTrainingTotal(r.total);
         setTrainingTrainedAt(Date.now() / 1000);
         setTrainingAcc(r.holdout_acc ?? null);
+        if (r.counts) setTrainingCounts(r.counts);
         setTrainMsg(`学習完了：累計 ${r.total} 件${r.holdout_acc != null ? `／概算一致率 ${(r.holdout_acc * 100).toFixed(0)}%` : ""}`);
       } else {
         setTrainMsg(r.reason === "insufficient_data" ? "学習データが不足しています（各感情に数件以上）。" : "学習をスキップしました。");
@@ -249,6 +266,26 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
       setTrainMsg(`学習に失敗: ${(e as Error).message}`);
     } finally {
       setRebuilding(false);
+    }
+  }
+
+  async function handleClearTraining() {
+    if (!window.confirm("個人学習データ（手ラベルと学習済みモデル）をすべて削除して初期化します。\nこの操作は取り消せません。よろしいですか？")) {
+      return;
+    }
+    setClearing(true);
+    setTrainMsg("");
+    try {
+      await api.clearTrainingLabels();
+      setTrainingTotal(0);
+      setTrainingTrainedAt(null);
+      setTrainingAcc(null);
+      setTrainingCounts({});
+      setTrainMsg("個人学習データを初期化しました（分析は基本モデルに戻ります）。");
+    } catch (e) {
+      setTrainMsg(`初期化に失敗: ${(e as Error).message}`);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -432,7 +469,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     <div>
                       <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
                         文脈ギャップ（秒）
-                        <span className="label-hint">台詞間にこの長さ以上の無音があると場面の区切りとみなし、文脈・余韻を持ち越さない。0=間を最大限尊重(1F区切り)／大きいほど短い間は無視。FPSでフレーム換算</span>
+                        <span className="label-hint">台詞間にこの長さ以上の無音があると場面の区切りとみなし、文脈・余韻を持ち越さない。0=どんな短い間でも区切る(1F・テンポ重視)／大きいほど短い間は無視して流れを優先(キャラの間重視)。FPSでフレーム換算</span>
                       </span>
                       <input
                         type="number"
@@ -530,9 +567,18 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                         style={{ width: "100%", maxWidth: "420px" }}
                       />
                     </div>
-                    <div className="flex items-center gap-3 mt-2">
-                      <button onClick={handleRebuildPersonalization} disabled={rebuilding} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
+                    <div className="flex items-center gap-3 mt-2 flex-wrap">
+                      <button onClick={handleRebuildPersonalization} disabled={rebuilding || clearing} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px" }}>
                         {rebuilding ? "学習中…" : "学習を再構築"}
+                      </button>
+                      <button
+                        onClick={handleClearTraining}
+                        disabled={clearing || rebuilding || (trainingTotal ?? 0) === 0}
+                        className="btn-ghost"
+                        style={{ fontSize: "0.76rem", padding: "5px 12px", color: "var(--em-anger)", border: "1px solid var(--em-anger)", borderRadius: "6px" }}
+                        title="過学習したと感じたときに、手ラベルと学習済みモデルを全削除して初期化します"
+                      >
+                        {clearing ? "初期化中…" : "個人学習データを初期化"}
                       </button>
                       <span style={{ fontSize: "0.73rem", color: "var(--text-muted)" }}>
                         累計ラベル {trainingTotal ?? "—"} 件
@@ -541,6 +587,15 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                       </span>
                     </div>
                     {trainMsg && <p style={{ fontSize: "0.73rem", color: "var(--text-secondary)", marginTop: "4px" }}>{trainMsg}</p>}
+                    {(trainingTotal ?? 0) > 0 && (
+                      <div className="mt-3">
+                        <span className="label-text" style={{ display: "block", marginBottom: "6px" }}>
+                          ラベル登録バランス
+                          <span className="label-hint">8感情の偏りを確認しながらバランス良く登録できます（呆れは辞書/学習頼りのため件数表示）</span>
+                        </span>
+                        <EmotionDonut counts={trainingCounts} />
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-3 mt-4">
@@ -566,6 +621,57 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     <li style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>YMM4 EmotionMaker KIT</li>
                     <li className="mono-text" style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>v{version || "—"}</li>
                   </ul>
+
+                  {/* 最新バージョン確認（GitHub の公開タグと比較） */}
+                  <div
+                    className="mb-6"
+                    style={{
+                      background: "var(--bg-surface)",
+                      border: "1px solid var(--border-dim)",
+                      borderRadius: "8px",
+                      padding: "12px 14px",
+                    }}
+                  >
+                    {checkingVersion ? (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>最新バージョンを確認中…</p>
+                    ) : !latestInfo ? (
+                      <p style={{ fontSize: "0.8rem", color: "var(--text-faint)" }}>—</p>
+                    ) : !latestInfo.ok || !latestInfo.latest ? (
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <p style={{ fontSize: "0.8rem", color: "var(--text-faint)" }}>
+                          最新バージョンを確認できませんでした（オフライン等）。
+                        </p>
+                        <button
+                          onClick={() => {
+                            setCheckingVersion(true);
+                            setLatestInfo(null);
+                            checkLatestVersion().then(setLatestInfo).finally(() => setCheckingVersion(false));
+                          }}
+                          className="btn-secondary"
+                          style={{ fontSize: "0.76rem", padding: "5px 12px" }}
+                        >
+                          再確認
+                        </button>
+                      </div>
+                    ) : compareSemver(latestInfo.latest, version || "0") > 0 ? (
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <p style={{ fontSize: "0.82rem", color: "var(--accent)", fontWeight: 700 }}>
+                          新しいバージョン v{latestInfo.latest} が公開されています
+                        </p>
+                        <button
+                          onClick={() => openExternalUrl(latestInfo.download_url)}
+                          className="btn-primary"
+                          style={{ fontSize: "0.8rem", padding: "6px 16px" }}
+                        >
+                          ダウンロードページを開く ↗
+                        </button>
+                      </div>
+                    ) : (
+                      <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)" }}>
+                        お使いのバージョン（v{version}）は最新です ✓
+                      </p>
+                    )}
+                  </div>
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>

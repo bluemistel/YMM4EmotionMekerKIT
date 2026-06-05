@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .config import get_data_dir
 from .emotion.base import EMOTION_LABELS
+from .text_normalize import normalize_serif
 
 
 def training_dir() -> Path:
@@ -51,10 +52,12 @@ def load_labels() -> list[dict]:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            text = (rec.get("text") or "").strip()
+            # 旧ラベル（YMM4 タグ入り）も正規化し、学習と推論の featurization を揃える。
+            text = normalize_serif(rec.get("text") or "")
             emotion = rec.get("emotion")
             if not text or emotion not in EMOTION_LABELS:
                 continue
+            rec["text"] = text
             key = (text, rec.get("character") or "")
             by_key[key] = rec  # 後勝ち（追記順＝新しい順で上書き）
     return list(by_key.values())
@@ -72,7 +75,7 @@ def append_labels(records: list[dict], source_project: str | None = None) -> int
     written = 0
     with open(path, "a", encoding="utf-8") as f:
         for r in records:
-            text = (r.get("text") or "").strip()
+            text = normalize_serif(r.get("text") or "")
             if not text:
                 continue
             emotion = r.get("emotion")
@@ -103,6 +106,17 @@ def clear_labels() -> None:
     p = labels_path()
     if p.exists():
         p.unlink()
+
+
+def clear_head() -> None:
+    """学習済みヘッド（head.pt / head_meta.json）を削除する。
+
+    残しておくと過学習したバイアスが推論に効き続けるため、初期化時はラベルと
+    合わせて消す。削除後は is_available()==False となり personalization は無効化。
+    """
+    for p in (head_path(), head_meta_path()):
+        if p.exists():
+            p.unlink()
 
 
 def save_head_meta(meta: dict) -> None:

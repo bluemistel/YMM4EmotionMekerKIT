@@ -5,6 +5,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .text_normalize import normalize_serif
+
 
 VOICE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.VoiceItem, YukkuriMovieMaker"
 TACHIE_FACE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker"
@@ -71,7 +73,10 @@ class YmmpProject:
             if item.get("$type") == VOICE_ITEM_TYPE:
                 voices.append(VoiceItem(
                     character_name=item["CharacterName"],
-                    serif=item.get("Serif", ""),
+                    # YMM4 制御タグ（色/サイズ/ルビ等）を除去したクリーンテキストにする。
+                    # 解析・埋め込み・辞書一致・学習ラベル・表示が全て同一テキストになる。
+                    # serif は .ymmp に書き戻さないため安全。
+                    serif=normalize_serif(item.get("Serif", "")),
                     frame=item["Frame"],
                     length=item["Length"],
                     layer=item["Layer"],

@@ -826,9 +826,14 @@ def add_training_labels(req: TrainingLabelsRequest):
 
 @app.delete("/api/training/labels")
 def clear_training_labels():
+    """個人学習データを初期化する: 手ラベル(labels.jsonl)と学習済みヘッドを両方削除。
+
+    過学習したヘッドが残ると推論に効き続けるため、ラベルと一緒に消して
+    personalization を完全に無効化（次回 rebuild まで base 出力に戻す）。
+    """
     from . import training_store, personalization
     training_store.clear_labels()
-    # ヘッドは残すが、ラベル0なら次回 rebuild で再構築不可になる旨は stats で示す。
+    training_store.clear_head()
     personalization.invalidate_cache()
     return {"status": "cleared"}
 
@@ -983,6 +988,15 @@ def analyze_emotions(req: AnalyzeRequest):
     texts = [_target_text(v) for v in voices]
 
     results = analyzer.analyze_batch(texts, contexts)
+
+    # --- 感情スコアへの補正注入順（統合ポリシー） ---
+    # raw(モデル出力)
+    #   → persona_prior（キャラの粗い事前分布・中心0バイアス）
+    #   → personalization（個人学習ヘッドの中心0バイアス。データ量と強度で自動減衰）
+    #   → apply_lexicon（ユーザー辞書＝最後段・最優先。set=ハード上書き／boost=加算アンサンブル）
+    #   → 無効マスク → 後処理(勾配/減衰)
+    # 辞書を最後段に置くことで、明示ルール（特に set）が学習・事前分布より常に優先される。
+    # personalization は辞書語を学習時にダウンウェイトしており、辞書と二重には効きにくい。
 
     # キャラ性格マップ(#4): 各キャラの感情価×覚醒度の事前分布を加算（粗い prior）。
     # persona_strength=0 のキャラはスキップ。
@@ -1548,6 +1562,59 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
             persona_strength=char_raw.get("persona_strength", 0.0),
         )
     return ProjectConfig(settings=settings, characters=characters)
+
+
+# --- Version check (GitHub の公開タグと比較) ---
+
+GITHUB_TAGS_URL = "https://api.github.com/repos/bluemistel/YMM4EmotionMekerKIT/tags"
+DOWNLOAD_URL = "https://bluemist.booth.pm/items/8466630"
+
+
+def _parse_semver(name: str) -> tuple[int, ...] | None:
+    """"v1.0.2" → (1,0,2)。純粋な数値ドット区切りのみ採用。"""
+    s = (name or "").strip().lstrip("vV")
+    parts = s.split(".")
+    if not parts or not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+@app.get("/api/version/latest")
+def get_latest_version():
+    """GitHub の公開タグから最新バージョンを取得して返す。
+
+    フロントは自身のアプリバージョンと比較して更新有無を判定する。失敗しても
+    アプリ動作には影響しないよう ok:false を返すだけにする（例外を投げない）。
+    """
+    import json as _json
+    import urllib.request
+
+    try:
+        req = urllib.request.Request(
+            GITHUB_TAGS_URL,
+            headers={
+                "User-Agent": "YMM4EmotionMakerKIT",
+                "Accept": "application/vnd.github+json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+        versions: list[tuple[int, ...]] = []
+        for t in data if isinstance(data, list) else []:
+            v = _parse_semver(t.get("name", ""))
+            if v is not None:
+                versions.append(v)
+        if not versions:
+            return {"ok": False, "download_url": DOWNLOAD_URL}
+        latest = max(versions)
+        return {
+            "ok": True,
+            "latest": ".".join(str(x) for x in latest),
+            "download_url": DOWNLOAD_URL,
+        }
+    except Exception as e:  # ネットワーク不通・レート制限などは握りつぶす
+        logger.info("version check failed: %s", e)
+        return {"ok": False, "download_url": DOWNLOAD_URL, "error": str(e)}
 
 
 # --- Server control ---

@@ -572,6 +572,37 @@ export async function getAppVersion(): Promise<string> {
   return APP_VERSION_FALLBACK;
 }
 
+export interface LatestVersionInfo {
+  ok: boolean;
+  latest?: string;
+  download_url: string;
+  error?: string;
+}
+
+/** GitHub の公開タグから最新バージョンを取得する（バックエンド経由）。 */
+export async function checkLatestVersion(): Promise<LatestVersionInfo> {
+  try {
+    return await request<LatestVersionInfo>("/api/version/latest");
+  } catch {
+    return { ok: false, download_url: "https://bluemist.booth.pm/items/8466630" };
+  }
+}
+
+/** semver 比較。a が b より新しければ 1、等しければ 0、古ければ -1。
+ *  数値ドット区切り（"1.0.4"）のみ対応。桁数差は 0 埋めで比較。 */
+export function compareSemver(a: string, b: string): number {
+  const pa = a.replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const pb = b.replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
+}
+
 /** Resolve the absolute path of a dropped File. Electron 32+ removed
  *  File.path, so webUtils.getPathForFile (exposed via preload) is required.
  *  Returns "" in a plain browser (dev) where the path is unavailable. */

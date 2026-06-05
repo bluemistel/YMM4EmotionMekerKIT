@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, VoiceInfo, TrainingRebuildResult } from "@/lib/api";
+import EmotionDonut from "./EmotionDonut";
 
 // 単一主感情ラベル（学習用）。0=中立/なし。
 const EMOTIONS: { key: string; label: string }[] = [
@@ -34,10 +35,20 @@ export default function TrainingLabeler({ voices, projectName, onExit }: Props) 
   const [rebuilding, setRebuilding] = useState(false);
   const [rebuildResult, setRebuildResult] = useState<TrainingRebuildResult | null>(null);
   const [storedTotal, setStoredTotal] = useState<number | null>(null);
+  const [storedCounts, setStoredCounts] = useState<Record<string, number>>({});
 
   useEffect(() => {
-    api.getTrainingLabels().then((r) => setStoredTotal(r.total)).catch(() => {});
+    api.getTrainingLabels().then((r) => { setStoredTotal(r.total); setStoredCounts(r.counts || {}); }).catch(() => {});
   }, []);
+
+  // 累計（サーバ保存済み）＋当該セッションの未保存ラベルを合算してバランス表示する。
+  const liveCounts = useMemo(() => {
+    const merged: Record<string, number> = { ...storedCounts };
+    for (const v of Object.values(labels)) {
+      if (v && v !== NEUTRAL) merged[v] = (merged[v] || 0) + 1;
+    }
+    return merged;
+  }, [storedCounts, labels]);
 
   const labeledCount = useMemo(
     () => Object.values(labels).filter((v) => v && v !== NEUTRAL).length,
@@ -98,6 +109,8 @@ export default function TrainingLabeler({ voices, projectName, onExit }: Props) 
       const r = await api.addTrainingLabels(payload, projectName);
       const total = Object.values(r.counts).reduce((a, b) => a + b, 0);
       setStoredTotal(total);
+      setStoredCounts(r.counts || {});
+      setLabels({}); // 保存済みは累計へ反映済みなのでセッションをリセット（二重計上防止）
       setMsg(`保存しました（このセッション ${r.written} 件 / 累計 ${total} 件）`);
     } catch (e) {
       setMsg(`保存に失敗: ${(e as Error).message}`);
@@ -151,6 +164,14 @@ export default function TrainingLabeler({ voices, projectName, onExit }: Props) 
         各台詞に最も近い「主感情」を1つ選びます（複合・強度は学習対象外、感情マッピングで補います）。
         キーボード: <strong>1–9</strong>=感情 / <strong>0</strong>=中立 / <strong>↑↓</strong>=移動 / <strong>Enter</strong>=次へ。
       </p>
+
+      {/* 登録状況（累計＋セッション）をライブ表示してバランス良くラベリングできるようにする。 */}
+      <div className="panel mb-2" style={{ padding: "8px 12px" }}>
+        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", fontWeight: 600, marginBottom: "4px" }}>
+          ラベル登録バランス（累計＋このセッション）
+        </div>
+        <EmotionDonut counts={liveCounts} />
+      </div>
 
       {(msg || rebuildResult) && (
         <div className="mb-2" style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>

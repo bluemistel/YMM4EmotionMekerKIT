@@ -31,9 +31,9 @@ function nearestMerihari(w: number): number {
 }
 
 const TEMPO: { value: number; label: string; desc: string }[] = [
-  { value: 1.0, label: "テンポ重視", desc: "詰まった掛け合いを一連の流れとして扱う（短い間では区切らない）" },
+  { value: 0.0, label: "テンポ重視", desc: "台詞間に空けた間（1F以上）をすべて場面の区切りにする（テンポよく細かく切り替える）" },
   { value: 0.4, label: "バランス", desc: "標準。明確な間で場面を区切る（既定）" },
-  { value: 0.0, label: "キャラの間重視", desc: "台詞間に空けた間（1F以上）をすべて場面の区切りにする" },
+  { value: 1.0, label: "キャラの間重視", desc: "キャラがしっかり取った大きな間（長い無音）だけを場面の区切りにし、短い間は流れとして繋ぐ" },
 ];
 
 function nearestTempo(sec: number): number {
