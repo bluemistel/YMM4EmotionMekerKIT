@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { api, AnalysisItem, PlacementItem, ProjectInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";
+import { api, AnalysisItem, PlacementItem, ProjectInfo, VoiceInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";
 import HeaderBar from "@/components/HeaderBar";
 import ProjectLoader, { FlowPhase } from "@/components/ProjectLoader";
+import TrainingLabeler from "@/components/TrainingLabeler";
+import PersonaMap from "@/components/PersonaMap";
 import CharacterList from "@/components/CharacterList";
 import MappingPanel from "@/components/MappingPanel";
 import DialogueList from "@/components/DialogueList";
@@ -17,6 +19,8 @@ import type { PostProcessConfig } from "@/components/PostProcessSettings";
 interface CharacterConfig {
   preset_ini: string;
   tachie_dir: string;
+  tachie_type?: string;
+  psd_path?: string;
   layer_offset: number;
   emotion_presets: Record<string, string>;
   emotion_intensity_presets: Record<string, Record<string, string>>;
@@ -25,12 +29,17 @@ interface CharacterConfig {
   compound_max_score: number;
   emotion_parts: Record<string, Record<string, string>>;
   gradient_presets: Record<string, string>;
+  persona_valence?: number;
+  persona_arousal?: number;
+  persona_strength?: number;
   preset_names?: string[];
   available_files?: Record<string, string[]>;
 }
 
 export default function Home() {
   const [project, setProject] = useState<ProjectInfo | null>(null);
+  const [trainingVoices, setTrainingVoices] = useState<VoiceInfo[] | null>(null);
+  const [trainingProjectName, setTrainingProjectName] = useState("");
   const [configs, setConfigs] = useState<Record<string, CharacterConfig>>({});
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
   const [analysisResults, setAnalysisResults] = useState<Record<string, AnalysisItem> | null>(null);
@@ -120,9 +129,19 @@ export default function Home() {
       const c = raw as Record<string, unknown>;
       const presetIni = c.preset_ini as string;
       const tachieDir = c.tachie_dir as string;
+      const tachieType = (c.tachie_type as string) || "png";
+      const psdPath = (c.psd_path as string) || "";
       let presetNames: string[] = [];
       let availableFiles: Record<string, string[]> = {};
-      if (presetIni) {
+      if (tachieType === "psd") {
+        // PSD立ち絵: プリセット名は -ymm.json 由来（tree エンドポイントから取得）。
+        try {
+          const res = await api.getPsdLayerTree(name);
+          presetNames = res.preset_names;
+        } catch {
+          // PSD 読込失敗は許容
+        }
+      } else if (presetIni) {
         try {
           const res = await api.loadPreset(name, presetIni, tachieDir);
           presetNames = res.preset_names;
@@ -134,6 +153,8 @@ export default function Home() {
       newConfigs[name] = {
         preset_ini: presetIni || "",
         tachie_dir: tachieDir || "",
+        tachie_type: tachieType,
+        psd_path: psdPath,
         layer_offset: (c.layer_offset as number) ?? 1,
         emotion_presets: (c.emotion_presets as Record<string, string>) || {},
         emotion_intensity_presets: (c.emotion_intensity_presets as Record<string, Record<string, string>>) || {},
@@ -142,6 +163,9 @@ export default function Home() {
         compound_max_score: (c.compound_max_score as number) ?? 0.65,
         emotion_parts: (c.emotion_parts as Record<string, Record<string, string>>) || {},
         gradient_presets: (c.gradient_presets as Record<string, string>) || {},
+        persona_valence: (c.persona_valence as number) ?? 0,
+        persona_arousal: (c.persona_arousal as number) ?? 0,
+        persona_strength: (c.persona_strength as number) ?? 0,
         preset_names: presetNames,
         available_files: availableFiles,
       };
@@ -200,6 +224,27 @@ export default function Home() {
       setFlowPhase("error");
       setFlowMessage(e instanceof Error ? e.message : String(e));
     }
+  }
+
+  async function loadForTraining(path: string) {
+    setFlowPhase("loading");
+    setFlowMessage("プロジェクトを読み込んでいます…");
+    try {
+      await api.loadProject(path);
+      const { voices } = await api.getVoices(0);
+      setTrainingVoices(voices);
+      setTrainingProjectName(path.split(/[\\/]/).pop() || path);
+      setFlowPhase("idle");
+      setFlowMessage("");
+    } catch (e) {
+      setFlowPhase("error");
+      setFlowMessage(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function exitTraining() {
+    setTrainingVoices(null);
+    setTrainingProjectName("");
   }
 
   async function handleOptimizerStart(patch: Record<string, unknown>) {
@@ -347,6 +392,9 @@ export default function Home() {
   // the selected line's character.
   const activeCharacter = selectedCharacter || autoHighlightedCharacter;
   const activeConfig = activeCharacter ? configs[activeCharacter] : null;
+  const activeCharMeta = activeCharacter
+    ? project?.characters.find((c) => c.name === activeCharacter) || null
+    : null;
 
   return (
     <div className="flex flex-col" style={{ height: "100vh" }}>
@@ -359,7 +407,13 @@ export default function Home() {
       />
 
       <main className="flex-1 min-h-0">
-        {!project ? (
+        {trainingVoices ? (
+          <TrainingLabeler
+            voices={trainingVoices}
+            projectName={trainingProjectName}
+            onExit={exitTraining}
+          />
+        ) : !project ? (
           <div className="h-full overflow-y-auto px-6 py-5 max-w-[1440px] mx-auto">
             <ProjectLoader
               onRunPipeline={runFullPipeline}
@@ -368,6 +422,7 @@ export default function Home() {
               exePath={ymm4ExePath}
               onExePathChange={setYmm4ExePath}
               onLoadWorkstate={handleLoadWorkstate}
+              onLoadForTraining={loadForTraining}
             />
           </div>
         ) : (
@@ -378,6 +433,8 @@ export default function Home() {
             presetNames={activeConfig?.preset_names || []}
             availableFiles={activeConfig?.available_files || {}}
             basePresetName={activeConfig?.emotion_presets?.default}
+            tachieType={activeCharMeta?.tachie_type || "png"}
+            psdPath={activeCharMeta?.psd_path ?? null}
             onOverrideChange={refreshResolution}
           >
             <div className="h-full grid grid-cols-12 gap-4 px-6 py-5 max-w-[1880px] mx-auto">
@@ -414,6 +471,14 @@ export default function Home() {
                     disabledEmotions={disabledEmotions}
                   />
                 )}
+
+                <PersonaMap
+                  characters={Object.keys(configs)}
+                  configs={configs}
+                  onConfigChange={handleConfigChange}
+                  selectedCharacter={selectedCharacter}
+                  colors={Object.fromEntries((project.characters || []).map((c) => [c.name, c.color]))}
+                />
               </div>
 
               {/* カラム3: 感情分析結果 + タイムライン */}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +13,9 @@ import yaml
 class CharacterConfig:
     preset_ini: str = ""
     tachie_dir: str = ""
+    # 立ち絵規格: "png"（パーツ画像）/ "psd"（PSD立ち絵）。psd のとき psd_path を使う。
+    tachie_type: str = "png"
+    psd_path: str = ""
     layer_offset: int = 1
     emotion_presets: dict[str, str] = field(default_factory=dict)
     # 単独感情の強度別プリセット: 感情 → {"weak": プリセット, "strong": プリセット}。
@@ -21,6 +26,10 @@ class CharacterConfig:
     compound_max_score: float = 0.65
     emotion_parts: dict[str, dict[str, str]] = field(default_factory=dict)
     gradient_presets: dict[str, str] = field(default_factory=dict)
+    # キャラ性格マップ(#4・ゲート機能): 感情価×覚醒度の事前分布。strength=0 で無効。
+    persona_valence: float = 0.0   # -1..1 ネガ⇔ポジ
+    persona_arousal: float = 0.0   # -1..1 落ち着き⇔ハイテンション
+    persona_strength: float = 0.0  # 0=無効
 
     @property
     def default_preset(self) -> str:
@@ -58,6 +67,9 @@ class Settings:
     gradient_gradual_max_delta: float = 0.15
     ymm4_exe_path: str = ""
     llm_api_key: str = ""
+    # 個人適応学習(#1): 学習済みヘッドによる感情補正の有効化と強度。
+    personalization_enabled: bool = False
+    personalization_strength: float = 0.5
 
 
 @dataclass
@@ -96,6 +108,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        personalization_enabled=settings_raw.get("personalization_enabled", False),
+        personalization_strength=settings_raw.get("personalization_strength", 0.5),
     )
 
     characters: dict[str, CharacterConfig] = {}
@@ -105,6 +119,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         characters[name] = CharacterConfig(
             preset_ini=char_raw.get("preset_ini", ""),
             tachie_dir=char_raw.get("tachie_dir", ""),
+            tachie_type=char_raw.get("tachie_type", "png"),
+            psd_path=char_raw.get("psd_path", ""),
             layer_offset=char_raw.get("layer_offset", 1),
             emotion_presets=char_raw.get("emotion_presets", {}),
             emotion_intensity_presets=char_raw.get("emotion_intensity_presets", {}),
@@ -113,6 +129,9 @@ def load_config(path: str | Path) -> ProjectConfig:
             compound_max_score=char_raw.get("compound_max_score", 0.65),
             emotion_parts=char_raw.get("emotion_parts", {}),
             gradient_presets=char_raw.get("gradient_presets", {}),
+            persona_valence=char_raw.get("persona_valence", 0.0),
+            persona_arousal=char_raw.get("persona_arousal", 0.0),
+            persona_strength=char_raw.get("persona_strength", 0.0),
         )
 
     return ProjectConfig(settings=settings, characters=characters)
@@ -142,6 +161,8 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "personalization_enabled": config.settings.personalization_enabled,
+            "personalization_strength": config.settings.personalization_strength,
         },
         "characters": {},
     }
@@ -149,6 +170,8 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
         data["characters"][name] = {
             "preset_ini": char.preset_ini,
             "tachie_dir": char.tachie_dir,
+            "tachie_type": char.tachie_type,
+            "psd_path": char.psd_path,
             "layer_offset": char.layer_offset,
             "emotion_presets": char.emotion_presets,
             "emotion_intensity_presets": char.emotion_intensity_presets,
@@ -157,6 +180,9 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "compound_max_score": char.compound_max_score,
             "emotion_parts": char.emotion_parts,
             "gradient_presets": char.gradient_presets,
+            "persona_valence": char.persona_valence,
+            "persona_arousal": char.persona_arousal,
+            "persona_strength": char.persona_strength,
         }
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +190,25 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+def _resolve_data_dir() -> Path:
+    """設定・辞書・学習データ・キャッシュの保存先を決める。
+
+    優先順位:
+      1) 環境変数 YMM4_DATA_DIR（Electron が userData 配下を渡す）。
+      2) PyInstaller 等で凍結（frozen）時は書込可能なユーザー領域
+         （%LOCALAPPDATA%\\YMM4EmotionMakerKIT\\data 等）。バンドル内は読取専用のため。
+      3) 開発時は従来どおり backend/data。
+    """
+    env = os.environ.get("YMM4_DATA_DIR")
+    if env:
+        return Path(env)
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / "YMM4EmotionMakerKIT" / "data"
+    return Path(__file__).resolve().parent.parent / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 
 
 def get_data_dir() -> Path:
@@ -189,22 +233,37 @@ def generate_template_config(
     character_names: list[str],
     preset_names_per_character: dict[str, list[str]],
     tachie_dirs: dict[str, str],
+    tachie_types: dict[str, str] | None = None,
+    psd_paths: dict[str, str] | None = None,
 ) -> ProjectConfig:
+    tachie_types = tachie_types or {}
+    psd_paths = psd_paths or {}
     characters: dict[str, CharacterConfig] = {}
     for name in character_names:
         presets = preset_names_per_character.get(name, [])
-        tachie_dir = tachie_dirs.get(name, "")
-        preset_ini = str(Path(tachie_dir) / "preset.ini") if tachie_dir else ""
+        ttype = tachie_types.get(name, "png")
+        psd_path = psd_paths.get(name, "")
+        if ttype == "psd":
+            tachie_dir = ""
+            preset_ini = ""
+        else:
+            tachie_dir = tachie_dirs.get(name, "")
+            preset_ini = str(Path(tachie_dir) / "preset.ini") if tachie_dir else ""
 
         default_preset = ""
-        for p in presets:
-            if "通常" in p:
-                default_preset = p
+        for token in ("通常", "デフォ", "ノーマル", "素"):
+            for p in presets:
+                if token in p:
+                    default_preset = p
+                    break
+            if default_preset:
                 break
 
         characters[name] = CharacterConfig(
             preset_ini=preset_ini,
             tachie_dir=tachie_dir,
+            tachie_type=ttype,
+            psd_path=psd_path,
             emotion_presets={
                 "joy": "",
                 "anger": "",

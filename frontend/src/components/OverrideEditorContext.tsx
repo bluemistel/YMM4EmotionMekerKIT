@@ -46,6 +46,7 @@ interface Snapshot {
   emotionOrder: string[];
   emotionTier: EmotionTier;
   partOverrides: Record<string, string>;
+  psdLayerOverrides: Record<string, boolean>;
 }
 
 interface OverrideEditorValue {
@@ -56,6 +57,9 @@ interface OverrideEditorValue {
   sortedPresets: string[];
   availableFiles: Record<string, string[]>;
   basePresetName?: string | null;
+  // 立ち絵規格（"png" / "psd"）と PSD ファイルパス。
+  tachieType: string;
+  psdPath: string | null;
   // state
   specMode: SpecMode;
   setSpecMode: (m: SpecMode) => void;
@@ -63,6 +67,7 @@ interface OverrideEditorValue {
   emotionOrder: string[];
   emotionTier: EmotionTier;
   partOverrides: Record<string, string>;
+  psdLayerOverrides: Record<string, boolean>;
   holdPrevious: boolean;
   scoresOpen: boolean;
   setScoresOpen: (o: boolean) => void;
@@ -74,6 +79,7 @@ interface OverrideEditorValue {
   toggleEmotion: (key: string) => void;
   setEmotionTier: (tier: EmotionTier) => void;
   setPart: (field: string, value: string) => void;
+  setPsdLayers: (next: Record<string, boolean>) => void;
   selectMode: (hold: boolean) => void;
   resetOverride: () => void;
 }
@@ -93,6 +99,8 @@ interface ProviderProps {
   presetNames: string[];
   availableFiles?: Record<string, string[]>;
   basePresetName?: string | null;
+  tachieType?: string;
+  psdPath?: string | null;
   onOverrideChange?: () => void;
   children: ReactNode;
 }
@@ -104,6 +112,8 @@ export function OverrideEditorProvider({
   presetNames,
   availableFiles,
   basePresetName,
+  tachieType = "png",
+  psdPath = null,
   onOverrideChange,
   children,
 }: ProviderProps) {
@@ -112,6 +122,7 @@ export function OverrideEditorProvider({
   const [emotionOrder, setEmotionOrder] = useState<string[]>([]);
   const [emotionTier, setEmotionTierState] = useState<EmotionTier>("mid");
   const [partOverrides, setPartOverrides] = useState<Record<string, string>>({});
+  const [psdLayerOverrides, setPsdLayerOverrides] = useState<Record<string, boolean>>({});
   const [holdPrevious, setHoldPrevious] = useState(false);
   const [scoresOpen, setScoresOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -126,6 +137,7 @@ export function OverrideEditorProvider({
     setEmotionOrder([]);
     setEmotionTierState("mid");
     setPartOverrides({});
+    setPsdLayerOverrides({});
     setHoldPrevious(false);
     setScoresOpen(false);
     if (voiceIndex == null) return;
@@ -154,6 +166,9 @@ export function OverrideEditorProvider({
             });
             setPartOverrides(mapped);
           }
+          if (o.psd_layer_overrides) {
+            setPsdLayerOverrides(o.psd_layer_overrides);
+          }
         }
       })
       .catch(() => {});
@@ -175,8 +190,10 @@ export function OverrideEditorProvider({
           else if (v) cp[k] = v;
         });
         const hasParts = Object.keys(cp).length > 0;
+        const psd = s.psdLayerOverrides || {};
+        const hasPsd = Object.keys(psd).length > 0;
         if (s.specMode === "emotion") {
-          if (s.emotionOrder.length === 0 && !hasParts) {
+          if (s.emotionOrder.length === 0 && !hasParts && !hasPsd) {
             await api.deleteOverride(voiceIndex);
           } else {
             await api.setOverride(voiceIndex, {
@@ -184,17 +201,19 @@ export function OverrideEditorProvider({
               // 強弱は第1感情のみ選択時に有効（複数選択時はバックエンドで無視される）。
               emotion_tier: s.emotionOrder.length === 1 ? s.emotionTier : undefined,
               part_overrides: hasParts ? cp : undefined,
+              psd_layer_overrides: hasPsd ? psd : undefined,
               locked: true,
             });
           }
         } else {
           const presetToUse = s.overridePreset || analysisItem?.resolution?.preset_name || "";
-          if (!s.overridePreset && !hasParts) {
+          if (!s.overridePreset && !hasParts && !hasPsd) {
             await api.deleteOverride(voiceIndex);
           } else {
             await api.setOverride(voiceIndex, {
               preset_name: presetToUse,
               part_overrides: hasParts ? cp : undefined,
+              psd_layer_overrides: hasPsd ? psd : undefined,
               locked: true,
             });
           }
@@ -208,7 +227,7 @@ export function OverrideEditorProvider({
 
   function setOverridePreset(name: string) {
     setOverridePresetState(name);
-    scheduleSave({ specMode: "preset", overridePreset: name, emotionOrder, emotionTier, partOverrides });
+    scheduleSave({ specMode: "preset", overridePreset: name, emotionOrder, emotionTier, partOverrides, psdLayerOverrides });
   }
 
   function toggleEmotion(key: string) {
@@ -217,14 +236,14 @@ export function OverrideEditorProvider({
       if (prev.includes(key)) next = prev.filter((k) => k !== key);
       else if (prev.length >= 3) next = prev;
       else next = [...prev, key];
-      scheduleSave({ specMode: "emotion", overridePreset, emotionOrder: next, emotionTier, partOverrides });
+      scheduleSave({ specMode: "emotion", overridePreset, emotionOrder: next, emotionTier, partOverrides, psdLayerOverrides });
       return next;
     });
   }
 
   function setEmotionTier(tier: EmotionTier) {
     setEmotionTierState(tier);
-    scheduleSave({ specMode: "emotion", overridePreset, emotionOrder, emotionTier: tier, partOverrides });
+    scheduleSave({ specMode: "emotion", overridePreset, emotionOrder, emotionTier: tier, partOverrides, psdLayerOverrides });
   }
 
   function setPart(field: string, value: string) {
@@ -232,9 +251,15 @@ export function OverrideEditorProvider({
       const next = { ...prev };
       if (value) next[field] = value;
       else delete next[field];
-      scheduleSave({ specMode, overridePreset, emotionOrder, emotionTier, partOverrides: next });
+      scheduleSave({ specMode, overridePreset, emotionOrder, emotionTier, partOverrides: next, psdLayerOverrides });
       return next;
     });
+  }
+
+  /** PSDレイヤーのパーツ個別変更デルタを丸ごと差し替えて保存（PsdLayerPanel から）。 */
+  function setPsdLayers(next: Record<string, boolean>) {
+    setPsdLayerOverrides(next);
+    scheduleSave({ specMode, overridePreset, emotionOrder, emotionTier, partOverrides, psdLayerOverrides: next });
   }
 
   async function selectMode(hold: boolean) {
@@ -248,6 +273,7 @@ export function OverrideEditorProvider({
         setEmotionOrder([]);
         setEmotionTierState("mid");
         setPartOverrides({});
+        setPsdLayerOverrides({});
       } else {
         await api.deleteOverride(voiceIndex);
         setHoldPrevious(false);
@@ -268,16 +294,22 @@ export function OverrideEditorProvider({
       setEmotionOrder([]);
       setEmotionTierState("mid");
       setPartOverrides({});
+      setPsdLayerOverrides({});
       onOverrideChange?.();
     } finally {
       setSaving(false);
     }
   }
 
+  // 解析の解決結果が無い場合（未解析・解析失敗・状態が古い等）でも、プリセットが
+  // 存在すれば「既定プリセット→先頭プリセット」にフォールバックして必ずプレビューを出す。
+  // これにより PSD/PNG とも、クリック時に「プリセット未解決」で固まらない。
+  const resolvedPreset = analysisItem?.resolution?.preset_name || "";
+  const fallbackPreset = basePresetName || sortedPresets[0] || "";
   const effectivePreset =
     specMode === "emotion"
-      ? analysisItem?.resolution?.preset_name || ""
-      : overridePreset || analysisItem?.resolution?.preset_name || "";
+      ? resolvedPreset || fallbackPreset
+      : overridePreset || resolvedPreset || fallbackPreset;
   const hasAnyPartOverride = Object.values(partOverrides).some((v) => v);
 
   const value: OverrideEditorValue = {
@@ -288,12 +320,15 @@ export function OverrideEditorProvider({
     sortedPresets,
     availableFiles: availableFiles || {},
     basePresetName,
+    tachieType,
+    psdPath,
     specMode,
     setSpecMode,
     overridePreset,
     emotionOrder,
     emotionTier,
     partOverrides,
+    psdLayerOverrides,
     holdPrevious,
     scoresOpen,
     setScoresOpen,
@@ -304,6 +339,7 @@ export function OverrideEditorProvider({
     toggleEmotion,
     setEmotionTier,
     setPart,
+    setPsdLayers,
     selectMode,
     resetOverride,
   };

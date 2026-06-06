@@ -5,6 +5,8 @@ import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .text_normalize import normalize_serif
+
 
 VOICE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.VoiceItem, YukkuriMovieMaker"
 TACHIE_FACE_ITEM_TYPE = "YukkuriMovieMaker.Project.Items.TachieFaceItem, YukkuriMovieMaker"
@@ -28,6 +30,10 @@ class CharacterInfo:
     tachie_directory: str | None = None
     voice_layer: int | None = None
     color: str | None = None
+    # 立ち絵の規格: "png"（パーツ画像立ち絵）または "psd"（PSD立ち絵）。
+    tachie_type: str = "png"
+    # PSD立ち絵のときの .psd ファイルパス。
+    psd_path: str | None = None
 
 
 class YmmpProject:
@@ -67,7 +73,10 @@ class YmmpProject:
             if item.get("$type") == VOICE_ITEM_TYPE:
                 voices.append(VoiceItem(
                     character_name=item["CharacterName"],
-                    serif=item.get("Serif", ""),
+                    # YMM4 制御タグ（色/サイズ/ルビ等）を除去したクリーンテキストにする。
+                    # 解析・埋め込み・辞書一致・学習ラベル・表示が全て同一テキストになる。
+                    # serif は .ymmp に書き戻さないため安全。
+                    serif=normalize_serif(item.get("Serif", "")),
                     frame=item["Frame"],
                     length=item["Length"],
                     layer=item["Layer"],
@@ -115,15 +124,25 @@ class YmmpProject:
         characters = []
         for char in self.data.get("Characters", []):
             tachie_dir = None
+            tachie_type = "png"
+            psd_path = None
             tcp = char.get("TachieCharacterParameter")
             if tcp:
-                tachie_dir = tcp.get("Directory")
+                ttype = tcp.get("$type", "")
+                if "Psd" in ttype:
+                    # PSD立ち絵: ディレクトリではなく単一の .psd ファイルを参照する。
+                    tachie_type = "psd"
+                    psd_path = tcp.get("FilePath")
+                else:
+                    tachie_dir = tcp.get("Directory")
             color = self._parse_argb_color(char.get("Color"))
             characters.append(CharacterInfo(
                 name=char["Name"],
                 tachie_directory=tachie_dir,
                 voice_layer=char.get("Layer"),
                 color=color,
+                tachie_type=tachie_type,
+                psd_path=psd_path,
             ))
         return characters
 

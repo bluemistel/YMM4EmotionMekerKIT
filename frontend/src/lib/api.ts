@@ -42,7 +42,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export interface ProjectInfo {
   path: string;
-  characters: { name: string; tachie_directory: string | null; voice_layer: number | null; color: string | null }[];
+  characters: { name: string; tachie_directory: string | null; voice_layer: number | null; color: string | null; tachie_type?: string; psd_path?: string | null }[];
   voice_count: number;
   video_info: Record<string, number>;
   timeline_count: number;
@@ -55,6 +55,28 @@ export interface VoiceInfo {
   frame: number;
   length: number;
   layer: number;
+}
+
+export interface TrainingHeadMeta {
+  total: number;
+  counts: Record<string, number>;
+  holdout_acc: number | null;
+  trained_at: number;
+}
+
+export interface TrainingStatus {
+  counts: Record<string, number>;
+  total: number;
+  head: TrainingHeadMeta | null;
+  head_available: boolean;
+}
+
+export interface TrainingRebuildResult {
+  trained: boolean;
+  reason?: string;
+  total: number;
+  counts: Record<string, number>;
+  holdout_acc?: number | null;
 }
 
 export interface PresetInfo {
@@ -122,6 +144,51 @@ export interface OverrideInfo {
   hold_previous?: boolean;
   emotion_labels?: string[] | null;
   emotion_tier?: string | null;
+  psd_layer_overrides?: Record<string, boolean> | null;
+}
+
+export interface PsdLayerNode {
+  id: string;
+  name: string;
+  is_folder: boolean;
+  base_visible: boolean;
+  children: PsdLayerNode[];
+}
+
+export interface PsdTreeInfo {
+  tree: PsdLayerNode[];
+  preset_names: string[];
+  all_layer_ids: string[];
+}
+
+export interface PsdPreviewInfo {
+  preset_name: string | null;
+  base_layers: string[];
+  enable_layers: string[];
+  path: string;
+}
+
+export interface PsdLayerImage {
+  id: string;
+  name: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  blend: string;
+  opacity: number;
+  path: string;
+}
+
+export interface PsdLayersInfo {
+  canvas: { w: number; h: number; scale: number };
+  scheme: string;
+  layers: PsdLayerImage[];
+}
+
+export interface PsdResolveInfo {
+  base_layers: string[];
+  enable_layers: string[];
 }
 
 export interface LexiconEntry {
@@ -204,6 +271,47 @@ export const api = {
 
   presetImageUrl(path: string) {
     return `${getApiBase()}/api/preset/image?path=${encodeURIComponent(path)}`;
+  },
+
+  // --- PSD立ち絵 ---
+  getPsdLayerTree(characterName: string) {
+    return request<PsdTreeInfo>(`/api/psd/${encodeURIComponent(characterName)}/tree`);
+  },
+
+  /** プリセット名＋レイヤーデルタ → 最終 EnableLayers と合成PNGパス。 */
+  psdPreview(
+    characterName: string,
+    body: { preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<PsdPreviewInfo>(`/api/psd/${encodeURIComponent(characterName)}/preview`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+
+  /** 明示的な EnableLayers 集合を合成して PNG パスを返す（フォールバック/高精度確認用）。 */
+  psdRender(characterName: string, enableLayers: string[]) {
+    return request<{ enable_layers: string[]; path: string }>(
+      `/api/psd/${encodeURIComponent(characterName)}/render`,
+      { method: "POST", body: JSON.stringify({ enable_layers: enableLayers }) }
+    );
+  },
+
+  /** 各レイヤーを事前ベイクした透明画像マニフェスト（高速プレビュー用）。 */
+  getPsdLayers(characterName: string, scale?: number) {
+    const qs = scale ? `?scale=${scale}` : "";
+    return request<PsdLayersInfo>(`/api/psd/${encodeURIComponent(characterName)}/layers${qs}`);
+  },
+
+  /** 合成せず可視レイヤー集合だけ取得（軽量・プリセット基準）。 */
+  resolvePsdLayers(
+    characterName: string,
+    body: { preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<PsdResolveInfo>(`/api/psd/${encodeURIComponent(characterName)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   generateTemplate() {
@@ -307,7 +415,7 @@ export const api = {
     );
   },
 
-  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string }) {
+  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
     return request<{ status: string }>(
       `/api/override/${voiceIndex}`,
       {
@@ -352,6 +460,26 @@ export const api = {
     );
   },
 
+  // --- 個人適応学習(#1) ---
+  getTrainingLabels() {
+    return request<TrainingStatus>("/api/training/labels");
+  },
+
+  addTrainingLabels(labels: { text: string; character?: string; emotion: string | null }[], sourceProject?: string) {
+    return request<{ status: string; written: number; counts: Record<string, number> }>(
+      "/api/training/labels",
+      { method: "POST", body: JSON.stringify({ labels, source_project: sourceProject }) }
+    );
+  },
+
+  clearTrainingLabels() {
+    return request<{ status: string }>("/api/training/labels", { method: "DELETE" });
+  },
+
+  rebuildPersonalization() {
+    return request<TrainingRebuildResult>("/api/training/rebuild", { method: "POST" });
+  },
+
   saveWorkstate(path: string) {
     return request<{ status: string; path: string }>(
       "/api/workstate/save",
@@ -382,7 +510,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.2";
+export const APP_VERSION_FALLBACK = "1.0.6";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;
@@ -482,6 +610,37 @@ export async function getAppVersion(): Promise<string> {
     }
   }
   return APP_VERSION_FALLBACK;
+}
+
+export interface LatestVersionInfo {
+  ok: boolean;
+  latest?: string;
+  download_url: string;
+  error?: string;
+}
+
+/** GitHub の公開タグから最新バージョンを取得する（バックエンド経由）。 */
+export async function checkLatestVersion(): Promise<LatestVersionInfo> {
+  try {
+    return await request<LatestVersionInfo>("/api/version/latest");
+  } catch {
+    return { ok: false, download_url: "https://bluemist.booth.pm/items/8466630" };
+  }
+}
+
+/** semver 比較。a が b より新しければ 1、等しければ 0、古ければ -1。
+ *  数値ドット区切り（"1.0.4"）のみ対応。桁数差は 0 埋めで比較。 */
+export function compareSemver(a: string, b: string): number {
+  const pa = a.replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const pb = b.replace(/^v/i, "").split(".").map((x) => parseInt(x, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da > db) return 1;
+    if (da < db) return -1;
+  }
+  return 0;
 }
 
 /** Resolve the absolute path of a dropped File. Electron 32+ removed

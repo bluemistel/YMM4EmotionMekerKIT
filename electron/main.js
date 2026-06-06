@@ -35,32 +35,57 @@ function findFreePort(startPort) {
   });
 }
 
+function getBackendExePath() {
+  // 本番: PyInstaller でバンドルした単体実行ファイル（Python 不要）。
+  const dir = getResourcePath("backend-dist");
+  const name = process.platform === "win32" ? "ymm4-backend.exe" : "ymm4-backend";
+  return path.join(dir, name);
+}
+
 function startBackend(port) {
   return new Promise((resolve, reject) => {
-    const backendDir = getResourcePath("backend");
-    const pythonPath =
-      process.platform === "win32" ? "python" : "python3";
+    // 設定・学習データ・モデルキャッシュは書込可能なユーザー領域に固定する
+    // （バンドル内は読取専用。アップデートしても引き継がれる）。
+    const dataDir = path.join(app.getPath("userData"), "data");
+    const env = {
+      ...process.env,
+      PYTHONDONTWRITEBYTECODE: "1",
+      YMM4_DATA_DIR: dataDir,
+      HF_HOME: path.join(dataDir, "hf"),
+      // 親(Electron)が異常終了してもバックエンドが自律終了できるよう PID を渡す。
+      YMM4_PARENT_PID: String(process.pid),
+    };
 
-    const env = { ...process.env, PYTHONDONTWRITEBYTECODE: "1" };
-
-    backendProcess = spawn(
-      pythonPath,
-      [
-        "-m",
-        "uvicorn",
-        "app.main:app",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        String(port),
-      ],
-      {
-        cwd: backendDir,
-        env,
-        stdio: ["ignore", "pipe", "pipe"],
-        windowsHide: true,
+    let command;
+    let args;
+    let cwd;
+    if (!isDev()) {
+      // バンドル済みバックエンドを起動（Python 環境に依存しない）。
+      const exe = getBackendExePath();
+      if (!fs.existsSync(exe)) {
+        reject(
+          new Error(
+            `バックエンド実行ファイルが見つかりません:\n${exe}\nインストールが破損している可能性があります。再インストールをお試しください。`
+          )
+        );
+        return;
       }
-    );
+      command = exe;
+      args = ["--host", "127.0.0.1", "--port", String(port)];
+      cwd = getResourcePath("backend-dist");
+    } else {
+      // 開発時はリポジトリの Python 環境で uvicorn を起動。
+      command = process.platform === "win32" ? "python" : "python3";
+      args = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)];
+      cwd = getResourcePath("backend");
+    }
+
+    backendProcess = spawn(command, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
 
     let started = false;
 
@@ -98,11 +123,11 @@ function startBackend(port) {
         started = true;
         resolve();
       }
-    }, 15000);
+    }, 60000);
   });
 }
 
-function waitForBackend(port, maxRetries = 30) {
+function waitForBackend(port, maxRetries = 120) {
   return new Promise((resolve, reject) => {
     let retries = 0;
     const check = () => {
@@ -325,9 +350,12 @@ app.on("ready", async () => {
     await createWindow();
   } catch (err) {
     console.error("Startup error:", err);
+    const hint = isDev()
+      ? "開発モードです。Python と依存関係（uvicorn 等）がインストールされているか確認してください。"
+      : "アプリの初回起動には数十秒かかる場合があります。解消しない場合は再インストールをお試しください。";
     dialog.showErrorBox(
       "起動エラー",
-      `バックエンドの起動に失敗しました。\nPython がインストールされているか確認してください。\n\n${err.message}`
+      `バックエンドの起動に失敗しました。\n${hint}\n\n${err.message}`
     );
     app.quit();
   }

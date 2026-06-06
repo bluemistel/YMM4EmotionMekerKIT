@@ -22,6 +22,7 @@ export default function VoiceDetailPanel() {
     setScoresOpen,
     saving,
     effectivePreset,
+    tachieType,
     setOverridePreset,
     toggleEmotion,
     setEmotionTier,
@@ -219,7 +220,7 @@ export default function VoiceDetailPanel() {
                   ))}
                 </select>
                 {effectivePreset && (
-                  <PresetHoverButton characterName={characterName} presetName={effectivePreset} basePresetName={basePresetName} />
+                  <PresetHoverButton characterName={characterName} presetName={effectivePreset} basePresetName={basePresetName} psd={tachieType === "psd"} />
                 )}
               </div>
             )}
