@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -188,7 +190,25 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
         yaml.dump(data, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+def _resolve_data_dir() -> Path:
+    """設定・辞書・学習データ・キャッシュの保存先を決める。
+
+    優先順位:
+      1) 環境変数 YMM4_DATA_DIR（Electron が userData 配下を渡す）。
+      2) PyInstaller 等で凍結（frozen）時は書込可能なユーザー領域
+         （%LOCALAPPDATA%\\YMM4EmotionMakerKIT\\data 等）。バンドル内は読取専用のため。
+      3) 開発時は従来どおり backend/data。
+    """
+    env = os.environ.get("YMM4_DATA_DIR")
+    if env:
+        return Path(env)
+    if getattr(sys, "frozen", False):
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home())
+        return Path(base) / "YMM4EmotionMakerKIT" / "data"
+    return Path(__file__).resolve().parent.parent / "data"
+
+
+DATA_DIR = _resolve_data_dir()
 
 
 def get_data_dir() -> Path:

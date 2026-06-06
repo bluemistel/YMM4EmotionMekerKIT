@@ -122,7 +122,9 @@ export default function CharacterList({
           const isAuto = !isSelected && autoHighlightedCharacter === c.name;
           const initial = (c.name.trim()[0] || "?");
           const bg = c.color || "var(--text-faint)";
-          const tachie = c.tachie_directory ? "立ち絵あり" : "立ち絵なし";
+          // PSD立ち絵はディレクトリではなく psd_path を持つため、両方を見て判定する。
+          const hasTachie = !!(c.tachie_directory || (c.tachie_type === "psd" && c.psd_path));
+          const tachie = hasTachie ? "立ち絵あり" : "立ち絵なし";
           const title = `${c.name}｜${presetCount} presets｜${tachie}`;
 
           return (
@@ -149,7 +151,7 @@ export default function CharacterList({
                     ? "2px dashed var(--accent)"
                     : "2px solid transparent",
                 boxShadow: isSelected ? "0 0 0 2px var(--accent-ring)" : "0 1px 3px #0000001f",
-                opacity: c.tachie_directory ? 1 : 0.5,
+                opacity: hasTachie ? 1 : 0.5,
               }}
             >
               {initial}

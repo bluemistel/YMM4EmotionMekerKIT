@@ -58,6 +58,51 @@ app.add_middleware(
 )
 
 
+def _start_parent_watchdog() -> None:
+    """親プロセス(Electron)が消えたら自分も終了する見張り（孤児化防止）。
+
+    Electron が環境変数 YMM4_PARENT_PID に自身の PID を渡す。クラッシュや
+    強制終了で Electron の終了処理(taskkill)がスキップされても、ここでバックエンドが
+    自律終了するため、ポート/メモリ/ファイルロックが残らない。
+    YMM4_PARENT_PID 未設定（手動起動・dev.js 経由など）では何もしない。
+    """
+    import os as _os
+    import threading
+
+    pid_s = _os.environ.get("YMM4_PARENT_PID")
+    if not pid_s:
+        return
+    try:
+        ppid = int(pid_s)
+    except ValueError:
+        return
+
+    def _watch() -> None:
+        import sys as _sys
+        import time as _time
+        if _sys.platform == "win32":
+            import ctypes
+            SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(SYNCHRONIZE, False, ppid)
+            if not handle:
+                return  # 親を掴めない（既に居ない/権限なし）→ 誤終了しないよう監視しない
+            # 親プロセスが終了するとハンドルが signaled になる → 即終了。
+            ctypes.windll.kernel32.WaitForSingleObject(handle, 0xFFFFFFFF)
+            _os._exit(0)
+        else:
+            while True:
+                try:
+                    _os.kill(ppid, 0)
+                except OSError:
+                    _os._exit(0)
+                _time.sleep(2)
+
+    threading.Thread(target=_watch, daemon=True, name="parent-watchdog").start()
+
+
+_start_parent_watchdog()
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     import traceback
@@ -406,6 +451,21 @@ def _get_psd_or_404(character_name: str):
         cc = config.get_character(character_name) if config else None
         psd = _get_psd_for(character_name, cc)
     if psd is None:
+        # 台詞の無いキャラ（config 未生成）でもプレビューできるよう、
+        # プロジェクトの Characters から psd_path を引いて遅延ロードする。
+        project: YmmpProject | None = _state["project"]
+        if project is not None:
+            for ci in project.get_characters():
+                if (
+                    ci.name == character_name
+                    and ci.tachie_type == "psd"
+                    and ci.psd_path
+                    and Path(ci.psd_path).exists()
+                ):
+                    psd = load_psd_tachie(ci.psd_path)
+                    _state["psd"][character_name] = psd
+                    break
+    if psd is None:
         raise HTTPException(404, f"No PSD tachie loaded for: {character_name}")
     return psd
 
@@ -456,10 +516,28 @@ def psd_preview(character_name: str, req: PsdPreviewRequest):
 
 @app.post("/api/psd/{character_name}/render")
 def psd_render(character_name: str, req: PsdRenderRequest):
-    """明示的な EnableLayers 集合を合成して PNG パスを返す（ソロ/スクロール後のライブ更新用）。"""
+    """明示的な EnableLayers 集合を合成して PNG パスを返す（フォールバック/高精度確認用）。"""
     psd = _get_psd_or_404(character_name)
     path = psd.render(req.enable_layers)
     return {"enable_layers": sorted(set(req.enable_layers)), "path": str(path)}
+
+
+@app.get("/api/psd/{character_name}/layers")
+def psd_layers(character_name: str, scale: float | None = None):
+    """各レイヤーを透明WebPに事前ベイクしたマニフェストを返す（高速プレビュー用）。
+
+    フロントは各画像をCSSで重ね、表示切替はクライアント側のみで行う（往復なし）。
+    画像は既存の /api/preset/image?path= で配信する。
+    """
+    psd = _get_psd_or_404(character_name)
+    return psd.bake_layers(scale)
+
+
+@app.post("/api/psd/{character_name}/resolve")
+def psd_resolve(character_name: str, req: PsdPreviewRequest):
+    """合成せずに、プリセット基準＋デルタの可視レイヤー集合だけ返す（軽量）。"""
+    psd = _get_psd_or_404(character_name)
+    return psd.resolve_only(req.preset_name, req.psd_layer_overrides)
 
 
 # --- Config endpoints ---

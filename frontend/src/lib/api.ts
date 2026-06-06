@@ -168,6 +168,29 @@ export interface PsdPreviewInfo {
   path: string;
 }
 
+export interface PsdLayerImage {
+  id: string;
+  name: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  blend: string;
+  opacity: number;
+  path: string;
+}
+
+export interface PsdLayersInfo {
+  canvas: { w: number; h: number; scale: number };
+  scheme: string;
+  layers: PsdLayerImage[];
+}
+
+export interface PsdResolveInfo {
+  base_layers: string[];
+  enable_layers: string[];
+}
+
 export interface LexiconEntry {
   pattern: string;
   emotion: string;
@@ -266,12 +289,29 @@ export const api = {
     });
   },
 
-  /** 明示的な EnableLayers 集合を合成して PNG パスを返す（ソロ/スクロール後）。 */
+  /** 明示的な EnableLayers 集合を合成して PNG パスを返す（フォールバック/高精度確認用）。 */
   psdRender(characterName: string, enableLayers: string[]) {
     return request<{ enable_layers: string[]; path: string }>(
       `/api/psd/${encodeURIComponent(characterName)}/render`,
       { method: "POST", body: JSON.stringify({ enable_layers: enableLayers }) }
     );
+  },
+
+  /** 各レイヤーを事前ベイクした透明画像マニフェスト（高速プレビュー用）。 */
+  getPsdLayers(characterName: string, scale?: number) {
+    const qs = scale ? `?scale=${scale}` : "";
+    return request<PsdLayersInfo>(`/api/psd/${encodeURIComponent(characterName)}/layers${qs}`);
+  },
+
+  /** 合成せず可視レイヤー集合だけ取得（軽量・プリセット基準）。 */
+  resolvePsdLayers(
+    characterName: string,
+    body: { preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<PsdResolveInfo>(`/api/psd/${encodeURIComponent(characterName)}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
   },
 
   generateTemplate() {
@@ -470,7 +510,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.4";
+export const APP_VERSION_FALLBACK = "1.0.6";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

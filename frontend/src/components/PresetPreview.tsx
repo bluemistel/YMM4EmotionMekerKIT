@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { api, PresetPreviewInfo } from "@/lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, PresetPreviewInfo, PsdLayersInfo, PsdLayerNode } from "@/lib/api";
+import { applyLayerDelta, effectiveVisibleLeaves } from "@/lib/psd";
 
 interface Props {
   characterName: string;
@@ -73,7 +74,10 @@ export default function PresetPreview({
 }: Props) {
   const [merged, setMerged] = useState<PresetPreviewInfo | null>(null);
   const [presetOnly, setPresetOnly] = useState<PresetPreviewInfo | null>(null);
-  const [psdPath, setPsdPath] = useState<string | null>(null);
+  // PSD: 事前ベイクしたレイヤー画像マニフェスト＋ツリー＋プリセット基準集合。
+  const [psdManifest, setPsdManifest] = useState<PsdLayersInfo | null>(null);
+  const [psdTree, setPsdTree] = useState<PsdLayerNode[]>([]);
+  const [psdBase, setPsdBase] = useState<string[]>([]);
   const [error, setError] = useState("");
   // Cursor-anchored zoom: scale + translation (px, relative to the box).
   const [view, setView] = useState(() =>
@@ -97,6 +101,14 @@ export default function PresetPreview({
   const overrideKey = JSON.stringify(overrideParts || {});
   const psdOverrideKey = JSON.stringify(psdLayerOverrides || {});
 
+  // PSD: 実際に表示するリーフID集合（基準＋デルタ→祖先フォルダ可視で絞り込み）。
+  // トグル/ソロ/スクロールはこの集合の再計算のみ＝バックエンド往復なしで瞬時。
+  const psdVisible = useMemo(() => {
+    if (!psd || !psdManifest) return new Set<string>();
+    const enable = applyLayerDelta(psdBase, psdLayerOverrides);
+    return effectiveVisibleLeaves(psdTree, enable, psdManifest.scheme);
+  }, [psd, psdManifest, psdTree, psdBase, psdOverrideKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Reset zoom AND blank the image only when the previewed preset/character
   // changes — NOT when part overrides change. Keeping the previous image during
   // an overrideParts refetch holds the box height stable, so the surrounding
@@ -109,19 +121,28 @@ export default function PresetPreview({
     setPresetOnly(null);
   }, [characterName, presetName, basePresetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // PSD: サーバ合成PNGのパスを取得する。preset/レイヤーデルタ変更で再取得。
+  // PSD: レイヤー画像マニフェスト＋ツリーを「キャラ単位で1回だけ」取得する
+  // （初回ベイクのみコスト。以降のトグルは取得不要＝瞬時）。
+  useEffect(() => {
+    if (!psd || !characterName) return;
+    let alive = true;
+    setPsdManifest(null);
+    Promise.all([api.getPsdLayers(characterName), api.getPsdLayerTree(characterName)])
+      .then(([m, t]) => { if (alive) { setPsdManifest(m); setPsdTree(t.tree); } })
+      .catch((e) => { if (alive) setError(e.message); });
+    return () => { alive = false; };
+  }, [psd, characterName, settingsTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // PSD: プリセット基準の可視集合（デルタ抜き・合成なし）をプリセット変更時に取得。
   useEffect(() => {
     if (!psd || !characterName) return;
     let alive = true;
     api
-      .psdPreview(characterName, {
-        preset_name: presetName || null,
-        psd_layer_overrides: psdLayerOverrides && Object.keys(psdLayerOverrides).length ? psdLayerOverrides : undefined,
-      })
-      .then((r) => { if (alive) setPsdPath(r.path); })
-      .catch((e) => { if (alive) setError(e.message); });
+      .resolvePsdLayers(characterName, { preset_name: presetName || null })
+      .then((r) => { if (alive) setPsdBase(r.base_layers); })
+      .catch(() => {});
     return () => { alive = false; };
-  }, [psd, characterName, presetName, psdOverrideKey, settingsTick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [psd, characterName, presetName]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetZoom() {
     setView({ scale: 1, tx: 0, ty: 0 });
@@ -164,7 +185,7 @@ export default function PresetPreview({
     }
     box.addEventListener("wheel", onWheel, { passive: false });
     return () => box.removeEventListener("wheel", onWheel);
-  }, [zoomable, merged, psdPath]);
+  }, [zoomable, merged, psdManifest]);
 
   // Drag-to-pan: window-level move/up listeners are only attached while a drag
   // is in progress, anchored from the mousedown position + the base translation.
@@ -247,6 +268,17 @@ export default function PresetPreview({
   if (error) return <p style={{ color: "var(--em-anger)", fontSize: "0.8125rem" }}>{error}</p>;
   if (!psd && !merged) return null;
 
+  // PSD: アスペクト比を保ったまま枠(3:4)に収める（高さ/幅の大きい方に合わせる contain）。
+  const BOX_ASPECT = 3 / 4;
+  let psdStageStyle: React.CSSProperties = { width: "100%" };
+  if (psd && psdManifest) {
+    const { w: cw, h: ch } = psdManifest.canvas;
+    psdStageStyle =
+      cw / ch >= BOX_ASPECT
+        ? { width: "100%", aspectRatio: `${cw} / ${ch}` } // 横長寄り→幅に合わせる
+        : { height: "100%", aspectRatio: `${cw} / ${ch}` }; // 縦長寄り→高さに合わせる
+  }
+
   const mergedParts: Record<string, string | null> = merged?.parts || {};
   const activeParts = Object.entries(mergedParts).filter(([, v]) => v !== null);
   // フィールドが現在プリセット由来またはパーツ個別変更由来（=表情アイテム）かを示す
@@ -307,14 +339,32 @@ export default function PresetPreview({
             }}
           >
             {psd ? (
-              // PSD: サーバ側で合成した1枚を表示する。
-              psdPath && (
-                <img
-                  src={api.presetImageUrl(psdPath)}
-                  alt={presetName}
-                  className="absolute inset-0 w-full h-full object-contain"
-                  draggable={false}
-                />
+              // PSD: 事前ベイクした各レイヤー画像を CSS で重ねる。表示/非表示は
+              // psdVisible 集合で切替えるだけ（バックエンド往復なし＝瞬時）。
+              psdManifest && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", ...psdStageStyle }}>
+                    {psdManifest.layers.map((L, i) => (
+                      <img
+                        key={L.id}
+                        src={api.presetImageUrl(L.path)}
+                        alt={L.name}
+                        draggable={false}
+                        style={{
+                          position: "absolute",
+                          left: `${(L.left / psdManifest.canvas.w) * 100}%`,
+                          top: `${(L.top / psdManifest.canvas.h) * 100}%`,
+                          width: `${(L.width / psdManifest.canvas.w) * 100}%`,
+                          height: `${(L.height / psdManifest.canvas.h) * 100}%`,
+                          zIndex: i,
+                          opacity: L.opacity,
+                          mixBlendMode: L.blend as React.CSSProperties["mixBlendMode"],
+                          visibility: psdVisible.has(L.id) ? "visible" : "hidden",
+                        }}
+                      />
+                    ))}
+                  </div>
+                </div>
               )
             ) : (
             /* RENDER_ORDER は前面→背面の順（Etc1 が最前面、Back3 が最背面）。

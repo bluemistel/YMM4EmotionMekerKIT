@@ -82,7 +82,7 @@ export default function PsdLayerPanel() {
     if (tachieType !== "psd" || !characterName) return;
     let alive = true;
     api
-      .psdPreview(characterName, { preset_name: effectivePreset || null })
+      .resolvePsdLayers(characterName, { preset_name: effectivePreset || null })
       .then((r) => { if (alive) setBaseLayers(new Set(r.base_layers)); })
       .catch(() => {});
     return () => { alive = false; };

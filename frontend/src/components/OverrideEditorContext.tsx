@@ -301,10 +301,15 @@ export function OverrideEditorProvider({
     }
   }
 
+  // 解析の解決結果が無い場合（未解析・解析失敗・状態が古い等）でも、プリセットが
+  // 存在すれば「既定プリセット→先頭プリセット」にフォールバックして必ずプレビューを出す。
+  // これにより PSD/PNG とも、クリック時に「プリセット未解決」で固まらない。
+  const resolvedPreset = analysisItem?.resolution?.preset_name || "";
+  const fallbackPreset = basePresetName || sortedPresets[0] || "";
   const effectivePreset =
     specMode === "emotion"
-      ? analysisItem?.resolution?.preset_name || ""
-      : overridePreset || analysisItem?.resolution?.preset_name || "";
+      ? resolvedPreset || fallbackPreset
+      : overridePreset || resolvedPreset || fallbackPreset;
   const hasAnyPartOverride = Object.values(partOverrides).some((v) => v);
 
   const value: OverrideEditorValue = {

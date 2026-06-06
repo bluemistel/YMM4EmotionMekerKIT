@@ -5,6 +5,9 @@ frontend/node_modules/
 # ===== ビルド成果物 / パッケージ =====
 dist/
 .output/
+# PyInstaller バックエンドバンドル（巨大・生成物）
+backend/dist/
+backend/build_pyi/
 frontend/out/
 frontend/.next/
 frontend/next-env.d.ts

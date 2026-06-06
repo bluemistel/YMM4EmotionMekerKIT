@@ -675,6 +675,15 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.6</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>Python不要で起動</strong>：バックエンドを同梱し、Python 未導入の環境でもそのまま動作（インストーラ版）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>PSDレイヤー切替を高速化</strong>：各レイヤーを事前生成して重ね合わせる方式に変更し、表示・非表示の切替を即時化（大きなPSDでも待ち時間なし）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>PSD表示の不具合修正</strong>：レイヤー番号のズレ、フォルダ非表示時に中のレイヤーが表示される問題、縦長立ち絵の表示比率、キャラクター設定でのPSD立ち絵の検出を修正</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個人適応学習の精度・運用改善</strong>：YMM4制御タグの除去、辞書登録語の過学習防止、2層ヘッド化（データ量で自動切替）、登録バランスの円グラフ表示、個人学習データの初期化ボタンを追加</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>バージョン確認</strong>：設定のバージョン情報で最新版の有無を確認し、更新がある場合はダウンロード先を表示</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>最適化ウィザード</strong>：「会話のテンポと間」の文言を分かりやすく修正</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.4</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>PSD立ち絵に対応</strong>：PSD規格の立ち絵（.psd ＋ -ymm.json プリセット）を読み込み、合成プレビューを表示</li>
