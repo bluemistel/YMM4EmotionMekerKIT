@@ -111,6 +111,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [speakerLabels, setSpeakerLabels] = useState(true);
   const [contextGapSeconds, setContextGapSeconds] = useState(0.4);
   const [readerWeight, setReaderWeight] = useState(0);
+  const [intensityWeakMax, setIntensityWeakMax] = useState(0.5);
+  const [intensityStrongMin, setIntensityStrongMin] = useState(0.83);
   const [disabledEmo, setDisabledEmo] = useState<Set<string>>(new Set());
   const [emoWarn, setEmoWarn] = useState("");
   const [showOptimizer, setShowOptimizer] = useState(true);
@@ -148,6 +150,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setSpeakerLabels(s.context_speaker_labels !== false);
         setContextGapSeconds(typeof s.context_gap_seconds === "number" ? (s.context_gap_seconds as number) : 0.4);
         setReaderWeight(typeof s.reader_weight === "number" ? (s.reader_weight as number) : 0);
+        setIntensityWeakMax(typeof s.intensity_weak_max === "number" ? (s.intensity_weak_max as number) : 0.5);
+        setIntensityStrongMin(typeof s.intensity_strong_min === "number" ? (s.intensity_strong_min as number) : 0.83);
         setDisabledEmo(new Set(Array.isArray(s.disabled_emotions) ? (s.disabled_emotions as string[]) : []));
         setEmoWarn("");
         setAutoDisableUndetected(s.auto_disable_undetected !== false);
@@ -234,6 +238,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         context_speaker_labels: speakerLabels,
         context_gap_seconds: contextGapSeconds,
         reader_weight: readerWeight,
+        intensity_weak_max: intensityWeakMax,
+        intensity_strong_min: intensityStrongMin,
         disabled_emotions: Array.from(disabledEmo),
         auto_disable_undetected: autoDisableUndetected,
         show_optimizer_on_load: showOptimizer,
@@ -488,6 +494,33 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                         <span className="label-hint">0=書き手の感情 / 1=視聴者から見た感情。立ち絵の見えに合わせて調整</span>
                       </span>
                       <input type="range" min={0} max={1} step={0.05} value={readerWeight} onChange={(e) => setReaderWeight(parseFloat(e.target.value))} style={{ width: "100%", maxWidth: "420px" }} />
+                    </div>
+                    <div className="col-span-2">
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        感情の強度しきい値（弱 / 強）
+                        <span className="label-hint">単独感情のスコアで「弱・中・強」を切り替える境界。スコア&lt;弱=弱、強≦スコア=強、その間=中。強度別プリセット（弱/中/強）の選択に使用</span>
+                      </span>
+                      <div className="flex items-center gap-5" style={{ maxWidth: "420px" }}>
+                        <label style={{ flex: 1, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+                          弱のしきい値 &lt; <span className="mono-text">{intensityWeakMax.toFixed(2)}</span>
+                          <input
+                            type="range" min={0.05} max={0.95} step={0.01} value={intensityWeakMax}
+                            onChange={(e) => setIntensityWeakMax(Math.min(parseFloat(e.target.value), intensityStrongMin - 0.01))}
+                            style={{ width: "100%", marginTop: "2px" }}
+                          />
+                        </label>
+                        <label style={{ flex: 1, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+                          強のしきい値 ≧ <span className="mono-text">{intensityStrongMin.toFixed(2)}</span>
+                          <input
+                            type="range" min={0.05} max={0.95} step={0.01} value={intensityStrongMin}
+                            onChange={(e) => setIntensityStrongMin(Math.max(parseFloat(e.target.value), intensityWeakMax + 0.01))}
+                            style={{ width: "100%", marginTop: "2px" }}
+                          />
+                        </label>
+                      </div>
+                      <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "3px" }}>
+                        既定値は WRIME 基準（弱 0.50 / 強 0.83）。
+                      </p>
                     </div>
                   </div>
 

@@ -52,6 +52,10 @@ class Settings:
     context_gap_seconds: float = 0.4
     # WRIME の reader 感情(視聴者視点)の混合率（0=writerのみ, 1=readerのみ）。
     reader_weight: float = 0.0
+    # 単独感情の強度しきい値（スコア0–1）。弱:[threshold, weak_max) / 中:[weak_max, strong_min) / 強:[strong_min,1]。
+    # WRIME の整数段階(1.5/2.5 を /3 正規化)が既定だが、ユーザーが調整できる。
+    intensity_weak_max: float = 0.5
+    intensity_strong_min: float = 0.83
     # 検出を無効化する感情ラベル（空=全有効）。台本に不要な感情を切るのに使う。
     disabled_emotions: list[str] = field(default_factory=list)
     # 分析で検出されなかった感情ラベルを自動的に OFF にする（既定ON）。
@@ -96,6 +100,8 @@ def load_config(path: str | Path) -> ProjectConfig:
         context_speaker_labels=settings_raw.get("context_speaker_labels", True),
         context_gap_seconds=settings_raw.get("context_gap_seconds", 0.4),
         reader_weight=settings_raw.get("reader_weight", 0.0),
+        intensity_weak_max=settings_raw.get("intensity_weak_max", 0.5),
+        intensity_strong_min=settings_raw.get("intensity_strong_min", 0.83),
         disabled_emotions=list(settings_raw.get("disabled_emotions", []) or []),
         auto_disable_undetected=settings_raw.get("auto_disable_undetected", True),
         show_optimizer_on_load=settings_raw.get("show_optimizer_on_load", True),
@@ -149,6 +155,8 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "context_speaker_labels": config.settings.context_speaker_labels,
             "context_gap_seconds": config.settings.context_gap_seconds,
             "reader_weight": config.settings.reader_weight,
+            "intensity_weak_max": config.settings.intensity_weak_max,
+            "intensity_strong_min": config.settings.intensity_strong_min,
             "disabled_emotions": config.settings.disabled_emotions,
             "auto_disable_undetected": config.settings.auto_disable_undetected,
             "show_optimizer_on_load": config.settings.show_optimizer_on_load,

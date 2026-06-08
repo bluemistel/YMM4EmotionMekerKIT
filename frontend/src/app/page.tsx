@@ -9,6 +9,7 @@ import PersonaMap from "@/components/PersonaMap";
 import CharacterList from "@/components/CharacterList";
 import MappingPanel from "@/components/MappingPanel";
 import DialogueList from "@/components/DialogueList";
+import EmotionGuide from "@/components/EmotionGuide";
 import TimelinePreview from "@/components/TimelinePreview";
 import ExecuteModal from "@/components/ExecuteModal";
 import PreviewPartsPanel from "@/components/PreviewPartsPanel";
@@ -347,6 +348,21 @@ export default function Home() {
     }
   }
 
+  // 「感情で指定」で無効化中の感情を選んだとき、その感情を有効化する。
+  // 検出なしで自動OFFされた感情を手動指定したら、自動OFFを解除し、その感情だけ
+  // 有効に戻す（感情マッピングに行が出てプリセットを割り当てられるようにする）。
+  async function handleEnableEmotion(key: string) {
+    const next = disabledEmotions.filter((e) => e !== key);
+    setDisabledEmotions(next);
+    try {
+      await api.updateSettings({ disabled_emotions: next, auto_disable_undetected: false });
+      window.dispatchEvent(new CustomEvent("ymm4-settings-changed"));
+    } catch {
+      // non-fatal
+    }
+    await refreshResolution();
+  }
+
   async function handleReanalyze() {
     setFlowPhase("analyzing");
     setFlowMessage("再分析しています…");
@@ -435,7 +451,15 @@ export default function Home() {
             basePresetName={activeConfig?.emotion_presets?.default}
             tachieType={activeCharMeta?.tachie_type || "png"}
             psdPath={activeCharMeta?.psd_path ?? null}
+            disabledEmotions={disabledEmotions}
+            onEnableEmotion={handleEnableEmotion}
             onOverrideChange={refreshResolution}
+            onPresetsChanged={(char, names) =>
+              setConfigs((prev) => ({
+                ...prev,
+                [char]: { ...prev[char], preset_names: names },
+              }))
+            }
           >
             <div className="h-full grid grid-cols-12 gap-4 px-6 py-5 max-w-[1880px] mx-auto">
               {/* カラム1: 固定プレビュー + パーツ個別変更 */}
@@ -496,6 +520,8 @@ export default function Home() {
                   analyzing={flowPhase === "analyzing"}
                   selectedVoiceIndex={selectedVoiceIndex}
                 />
+
+                <EmotionGuide item={selectedAnalysisItem} />
 
                 <TimelinePreview
                   placements={placements}

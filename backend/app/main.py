@@ -37,10 +37,12 @@ from .preset_loader import (
     FIELD_TO_SUBDIR,
     RENDER_ORDER,
     PresetCollection,
+    append_preset_ini,
     load_preset_ini,
+    merge_ini_parts,
     resolve_part_path,
 )
-from .psd_loader import load_psd_tachie
+from .psd_loader import load_psd_tachie, reload_psd_tachie
 from .ymm4_settings import get_default_tachie_parts
 from .timing_engine import FacePlacement, compute_face_placements
 from .ymmp_parser import CharacterInfo, VoiceItem, YmmpProject
@@ -540,6 +542,59 @@ def psd_resolve(character_name: str, req: PsdPreviewRequest):
     return psd.resolve_only(req.preset_name, req.psd_layer_overrides)
 
 
+# --- パーツ個別変更を YMM4 プリセットとして保存 ---
+
+class SavePngPresetRequest(BaseModel):
+    name: str
+    base_preset_name: str | None = None
+    part_overrides: dict[str, str] | None = None
+
+
+class SavePsdPresetRequest(BaseModel):
+    name: str
+    preset_name: str | None = None
+    psd_layer_overrides: dict[str, bool] | None = None
+
+
+@app.post("/api/preset/{character_name}/save-preset")
+def save_png_preset(character_name: str, req: SavePngPresetRequest):
+    """PNG立ち絵: ベースプリセット＋パーツ個別変更を新プリセットとして preset.ini 末尾に追記。"""
+    config: ProjectConfig | None = _state["config"]
+    cc = config.get_character(character_name) if config else None
+    if cc is None or not cc.preset_ini:
+        raise HTTPException(400, f"No preset.ini configured for: {character_name}")
+    collection: PresetCollection | None = _state["presets"].get(character_name)
+    base_parts: dict[str, str] = {}
+    if collection is not None and req.base_preset_name:
+        base = collection.presets.get(req.base_preset_name)
+        if base is not None:
+            base_parts = dict(base.parts)
+    merged = merge_ini_parts(base_parts, req.part_overrides)
+    try:
+        append_preset_ini(cc.preset_ini, req.name, merged)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # 再読込してアプリへ反映。
+    col = load_preset_ini(cc.preset_ini, cc.tachie_dir or None)
+    _state["presets"][character_name] = col
+    return {"status": "saved", "name": req.name.strip(), "preset_names": col.get_preset_names()}
+
+
+@app.post("/api/psd/{character_name}/save-preset")
+def save_psd_preset(character_name: str, req: SavePsdPresetRequest):
+    """PSD立ち絵: 現在の可視レイヤー集合を新プリセットとして -ymm.json 末尾に追記。"""
+    psd = _get_psd_or_404(character_name)
+    enable = psd.resolve_only(req.preset_name, req.psd_layer_overrides)["enable_layers"]
+    try:
+        psd.append_preset(req.name, enable)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    # -ymm.json 変更は PSD mtime を変えないため、キャッシュを破棄して作り直す。
+    fresh = reload_psd_tachie(psd.psd_path)
+    _state["psd"][character_name] = fresh
+    return {"status": "saved", "name": req.name.strip(), "preset_names": fresh.get_preset_names()}
+
+
 # --- Config endpoints ---
 
 @app.post("/api/config/save")
@@ -707,6 +762,10 @@ def update_settings(req: UpdateSettingsRequest):
         config.settings.context_gap_seconds = max(0.0, float(s["context_gap_seconds"]))
     if "reader_weight" in s:
         config.settings.reader_weight = float(s["reader_weight"])
+    if "intensity_weak_max" in s:
+        config.settings.intensity_weak_max = max(0.0, min(1.0, float(s["intensity_weak_max"])))
+    if "intensity_strong_min" in s:
+        config.settings.intensity_strong_min = max(0.0, min(1.0, float(s["intensity_strong_min"])))
     if "disabled_emotions" in s:
         from .emotion.base import EMOTION_LABELS
         config.settings.disabled_emotions = [
@@ -1376,13 +1435,15 @@ def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None,
             if len(labels) == 1 and tier in ("weak", "mid", "strong"):
                 # 第1感情のみ: ユーザー指定の強弱帯にスコアを合成し、resolve_slot の
                 # 強度別分岐（emotion_intensity_presets、未設定は中へフォールバック）に委ねる。
-                from .expression_mapper import INTENSITY_WEAK_MAX, INTENSITY_STRONG_MIN
+                # しきい値はユーザー設定（mapper に反映済み）を使う。
+                weak_max = mapper.weak_max
+                strong_min = mapper.strong_min
                 if tier == "weak":
-                    score = max(threshold + 0.01, (threshold + INTENSITY_WEAK_MAX) / 2)
+                    score = max(threshold + 0.01, (threshold + weak_max) / 2)
                 elif tier == "strong":
-                    score = min(1.0, INTENSITY_STRONG_MIN + 0.05)
+                    score = min(1.0, strong_min + 0.05)
                 else:
-                    score = (INTENSITY_WEAK_MAX + INTENSITY_STRONG_MIN) / 2
+                    score = (weak_max + strong_min) / 2
                 setattr(synth, labels[0], score)
             else:
                 # 複合（2つ以上）: 拮抗スコアを合成。強弱は意味を成さないため無視。
@@ -1430,6 +1491,59 @@ def _resolve_voice(mapper, char_config, presets, a: dict, override: dict | None,
     return (slot_key, preset_name, source, parts)
 
 
+def _build_guide(mapper, char_config, a: dict, override: dict | None, threshold: float) -> dict | None:
+    """セリフ一覧のガイド表示用に「該当する感情＋割り当てプリセット」を返す。
+
+    2つは別アルゴリズムなので分けて求める（仕様どおり）:
+      - 「該当する感情」(kind/emotions/tier)＝『検出』。スコアからの検出(detect_slot＝既存
+        検出ルールと同一)／手動ラベル／勾配(急変・徐々)。マッピング有無では変えない。
+      - 「プリセット」(preset_name)＝ resolution.preset_name。resolve_slot の遡り
+        （複合3→複合2→単独強弱→単独中→デフォルト）・勾配・上書きを反映した実際の割り当て。
+    戻り値: {kind, emotions, tier, preset_name|None, overridden, override_kind, gradient_type}
+    """
+    res = a.get("resolution")
+    if not res:
+        return None
+    slot = res.get("slot_key") or ""
+    preset = res.get("preset_name") or None      # ← 実際に割り当てられるプリセット
+    source = res.get("source")
+    overridden = source == "override"
+    override_kind = None
+    if overridden:
+        override_kind = "preset" if (override and override.get("preset_name")) else "emotion"
+
+    base = {
+        "emotions": [], "tier": None, "preset_name": preset,
+        "overridden": overridden, "override_kind": override_kind, "gradient_type": None,
+    }
+
+    from .emotion.base import EmotionResult
+
+    # --- 「該当する感情」の検出（マッピング有無に依存しない） ---
+    # 1) プリセットで指定（直接）
+    if overridden and override and override.get("preset_name"):
+        return {**base, "kind": "preset"}
+    # 2) 感情で指定（手動ラベル）→ ユーザーが選んだラベルをそのまま表示
+    if overridden and override and override.get("emotion_labels"):
+        labels = [e for e in override["emotion_labels"] if hasattr(EmotionResult(), e)][:3]
+        if labels:
+            if len(labels) >= 3:
+                return {**base, "kind": "compound3", "emotions": labels}
+            if len(labels) == 2:
+                return {**base, "kind": "compound2", "emotions": labels}
+            t = override.get("emotion_tier")
+            return {**base, "kind": "single", "emotions": labels,
+                    "tier": t if t in ("weak", "mid", "strong") else "mid"}
+    # 3) 感情後処理の勾配が実際に適用されている（resolution が gradient）
+    if source == "gradient" and slot.startswith("gradient_"):
+        head, _, dom = slot.partition(":")
+        return {**base, "kind": "gradient", "gradient_type": head[len("gradient_"):],
+                "emotions": [dom] if dom else []}
+    # 4) 自動：スコアからの検出（detect_slot）
+    detect = mapper.detect_slot(EmotionResult(**a["emotion"]), threshold)
+    return {**base, "kind": detect["kind"], "emotions": detect["emotions"], "tier": detect["tier"]}
+
+
 def _resolve_for_analysis(config: ProjectConfig, analysis: dict, overrides: dict) -> None:
     """Mutate analysis in place, attaching a per-voice `resolution` dict
     (or None when the character/presets are unconfigured). Recomputed from
@@ -1448,7 +1562,11 @@ def _resolve_for_analysis(config: ProjectConfig, analysis: dict, overrides: dict
             continue
         mapper = mappers.get(char_name)
         if mapper is None:
-            mapper = ExpressionMapper(char_config, presets_like)
+            mapper = ExpressionMapper(
+                char_config, presets_like,
+                weak_max=config.settings.intensity_weak_max,
+                strong_min=config.settings.intensity_strong_min,
+            )
             mappers[char_name] = mapper
         override = overrides.get(int(idx)) if str(idx).isdigit() else None
         override = override or overrides.get(str(idx)) or overrides.get(idx)
@@ -1461,8 +1579,10 @@ def _resolve_for_analysis(config: ProjectConfig, analysis: dict, overrides: dict
                 "preset_name": preset_name,
                 "source": source,
             }
+            a["guide"] = _build_guide(mapper, char_config, a, override, threshold)
         except Exception:
             a["resolution"] = None
+            a["guide"] = None
 
 
 def _get_or_create_analyzer(model_type: str, settings: Settings):
@@ -1507,7 +1627,11 @@ def _compute_all_placements(
         if char_config is None or presets_like is None:
             continue
 
-        mapper = ExpressionMapper(char_config, presets_like)
+        mapper = ExpressionMapper(
+            char_config, presets_like,
+            weak_max=config.settings.intensity_weak_max,
+            strong_min=config.settings.intensity_strong_min,
+        )
         threshold = config.settings.emotion_threshold
 
         overrides: dict = _state.get("overrides", {})
@@ -1555,6 +1679,8 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "context_speaker_labels": config.settings.context_speaker_labels,
             "context_gap_seconds": config.settings.context_gap_seconds,
             "reader_weight": config.settings.reader_weight,
+            "intensity_weak_max": config.settings.intensity_weak_max,
+            "intensity_strong_min": config.settings.intensity_strong_min,
             "disabled_emotions": config.settings.disabled_emotions,
             "auto_disable_undetected": config.settings.auto_disable_undetected,
             "show_optimizer_on_load": config.settings.show_optimizer_on_load,
@@ -1604,6 +1730,8 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         context_speaker_labels=settings_raw.get("context_speaker_labels", True),
         context_gap_seconds=settings_raw.get("context_gap_seconds", 0.4),
         reader_weight=settings_raw.get("reader_weight", 0.0),
+        intensity_weak_max=settings_raw.get("intensity_weak_max", 0.5),
+        intensity_strong_min=settings_raw.get("intensity_strong_min", 0.83),
         disabled_emotions=list(settings_raw.get("disabled_emotions", []) or []),
         auto_disable_undetected=settings_raw.get("auto_disable_undetected", True),
         show_optimizer_on_load=settings_raw.get("show_optimizer_on_load", True),

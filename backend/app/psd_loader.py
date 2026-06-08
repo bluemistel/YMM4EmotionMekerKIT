@@ -74,6 +74,10 @@ class PsdTachie:
         self.eye_anim_groups: list[list[str]] = []
         self._tree: list[PsdNode] = []
         self._all_ids: set[str] = set()
+        # レイヤーID → 正準順序インデックス（ツリーDFSの上→下プリオーダー）。
+        # YMM4 はプリセットの Layers をこの順で並べるため、保存時に必ずこの順へ整列する
+        # （順序が違うと YMM4 がプリセットを認識できない）。
+        self._order_index: dict[str, int] = {}
         self._psd = None  # lazy psd_tools.PSDImage
         self._render_lock = threading.Lock()
         # レイヤー識別スキーム: "i"=PSDのレイヤーID(lyid)由来 / "n"=生レコードの位置番号。
@@ -181,6 +185,38 @@ class PsdTachie:
 
         self._tree = build(psd)
 
+        # ツリーDFS（上→下プリオーダー）で正準順序を確定。YMM4 のプリセット Layers の
+        # 並びと一致する（実機の -ymm.json で検証済み）。
+        order: dict[str, int] = {}
+
+        def index(nodes: list[PsdNode]) -> None:
+            for n in nodes:
+                if n.id not in order:
+                    order[n.id] = len(order)
+                index(n.children)
+
+        index(self._tree)
+        self._order_index = order
+
+    def order_layers(self, ids) -> list[str]:
+        """レイヤーID集合を YMM4 の正準順序（ツリーDFS上→下）へ整列して返す。
+
+        未知ID（ツリーに無いもの）は末尾に自然順で付ける（堅牢性のため）。
+        重複は除去する。
+        """
+        seen: set[str] = set()
+        uniq: list[str] = []
+        for x in ids:
+            sx = str(x)
+            if sx not in seen:
+                seen.add(sx)
+                uniq.append(sx)
+        known = [x for x in uniq if x in self._order_index]
+        unknown = [x for x in uniq if x not in self._order_index]
+        known.sort(key=lambda x: self._order_index[x])
+        unknown.sort(key=_natural_key)
+        return known + unknown
+
     # ---- psd_tools ハンドル -----------------------------------------------
     def _get_psd(self):
         if self._psd is None:
@@ -191,6 +227,38 @@ class PsdTachie:
     # ---- 公開 API ----------------------------------------------------------
     def get_preset_names(self) -> list[str]:
         return sorted(self.presets.keys(), key=_natural_key)
+
+    def append_preset(self, name: str, layers: list[str]) -> None:
+        """-ymm.json の Presets 末尾に新プリセット {Name, Layers} を追記する。
+
+        他のフィールド（MouthAnimations 等）は保持。YMM4 と同じく末尾に追加する。
+        書き込み後は再読込（reload_psd_tachie）でアプリへ反映する想定。
+        """
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("プリセット名が空です")
+        p = self._ymm_json_path()
+        data: dict = {}
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8-sig") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                data = {}
+        if not isinstance(data, dict):
+            data = {}
+        presets = data.get("Presets")
+        if not isinstance(presets, list):
+            presets = []
+        # YMM4 はプリセットの Layers をツリーDFS（上→下）の正準順序で並べる。
+        # 順序が違うと YMM4 側で認識できないため、書き込み前に必ず整列する。
+        presets.append({"Name": name, "Layers": self.order_layers(layers)})
+        data["Presets"] = presets
+        # 既存になければ空配列を補完（YMM4 の標準フィールド）。
+        for k in ("MouthAnimations", "MouthVowelAnimations", "EyeAnimations"):
+            data.setdefault(k, [])
+        with open(p, "w", encoding="utf-8-sig") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     def layer_tree(self) -> list[dict]:
         return [n.to_dict() for n in self._tree]
@@ -375,4 +443,24 @@ def load_psd_tachie(psd_path: str | Path) -> PsdTachie:
         if inst is None:
             inst = PsdTachie(p)
             _CACHE[key] = inst
+        return inst
+
+
+def reload_psd_tachie(psd_path: str | Path) -> PsdTachie:
+    """-ymm.json を外部更新した後など、キャッシュを破棄して PsdTachie を作り直す。
+
+    _CACHE のキーは PSD の mtime（-ymm.json 変更では変わらない）ため、当該パスの
+    キャッシュ entry を全て捨ててから新規生成する。
+    """
+    p = Path(psd_path)
+    sp = str(p)
+    with _CACHE_LOCK:
+        for k in [k for k in _CACHE if k[0] == sp]:
+            _CACHE.pop(k, None)
+        inst = PsdTachie(p)
+        try:
+            mtime = int(p.stat().st_mtime)
+        except OSError:
+            mtime = 0
+        _CACHE[(sp, mtime)] = inst
         return inst

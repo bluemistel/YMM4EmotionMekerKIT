@@ -82,6 +82,8 @@ interface OverrideEditorValue {
   setPsdLayers: (next: Record<string, boolean>) => void;
   selectMode: (hold: boolean) => void;
   resetOverride: () => void;
+  /** 保存後に親の configs[char].preset_names を更新する。 */
+  onPresetsChanged?: (characterName: string, names: string[]) => void;
 }
 
 const Ctx = createContext<OverrideEditorValue | null>(null);
@@ -101,7 +103,13 @@ interface ProviderProps {
   basePresetName?: string | null;
   tachieType?: string;
   psdPath?: string | null;
+  /** 現在 OFF（検出なし等で無効化）になっている感情ラベル。 */
+  disabledEmotions?: string[];
+  /** 無効化中の感情を「感情で指定」で選んだとき、その感情を有効化する。 */
+  onEnableEmotion?: (key: string) => void;
   onOverrideChange?: () => void;
+  /** 新規プリセット保存後、preset_names の更新を親へ通知する。 */
+  onPresetsChanged?: (characterName: string, names: string[]) => void;
   children: ReactNode;
 }
 
@@ -114,7 +122,10 @@ export function OverrideEditorProvider({
   basePresetName,
   tachieType = "png",
   psdPath = null,
+  disabledEmotions = [],
+  onEnableEmotion,
   onOverrideChange,
+  onPresetsChanged,
   children,
 }: ProviderProps) {
   const [specMode, setSpecMode] = useState<SpecMode>("preset");
@@ -236,6 +247,10 @@ export function OverrideEditorProvider({
       if (prev.includes(key)) next = prev.filter((k) => k !== key);
       else if (prev.length >= 3) next = prev;
       else next = [...prev, key];
+      // 追加された感情が「無効化中（検出なしで自動OFF等）」なら、その感情を有効化する
+      // （感情マッピングに行が出るようにし、自動OFFも解除する）。
+      const added = !prev.includes(key) && next.includes(key);
+      if (added && disabledEmotions.includes(key)) onEnableEmotion?.(key);
       scheduleSave({ specMode: "emotion", overridePreset, emotionOrder: next, emotionTier, partOverrides, psdLayerOverrides });
       return next;
     });
@@ -342,6 +357,7 @@ export function OverrideEditorProvider({
     setPsdLayers,
     selectMode,
     resetOverride,
+    onPresetsChanged,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

@@ -53,6 +53,9 @@ INI_KEY_TO_FIELD = {
     "後3": "Back3",
 }
 
+# フィールド名 → preset.ini のキー（保存時に使う逆引き）。
+FIELD_TO_INI_KEY = {v: k for k, v in INI_KEY_TO_FIELD.items()}
+
 FIELD_TO_SUBDIR = {
     "Eyebrow": "眉",
     "Eye": "目",
@@ -207,3 +210,56 @@ def load_preset_ini(ini_path: str | Path, tachie_directory: str | Path | None = 
             presets[current_section] = Preset(name=current_section, parts=current_parts)
 
     return PresetCollection(directory=tachie_directory, presets=presets)
+
+
+# preset.ini のセクション名/キーに使えない文字。
+_INI_NAME_BAD = set("[]\r\n=")
+
+
+def merge_ini_parts(base_parts: dict[str, str], part_overrides: dict[str, str] | None) -> dict[str, str]:
+    """ベースプリセットの parts（INIキー→ファイル名）に、パーツ個別変更
+    （フィールド名→ファイル名）を重ねた最終 INIキー→ファイル名 を返す。
+
+    part_overrides の値が空文字なら「そのパーツを削除」（preset から除く）。
+    """
+    merged: dict[str, str] = dict(base_parts or {})
+    for field_name, filename in (part_overrides or {}).items():
+        ini_key = FIELD_TO_INI_KEY.get(field_name)
+        if ini_key is None:
+            continue
+        if not filename:  # "" / None = パーツなし → 削除
+            merged.pop(ini_key, None)
+        else:
+            # ファイル名のみにする（パス区切りが含まれていても basename を採用）。
+            merged[ini_key] = filename.replace("\\", "/").split("/")[-1]
+    return merged
+
+
+def append_preset_ini(ini_path: str | Path, name: str, parts: dict[str, str]) -> None:
+    """preset.ini の末尾に新しい [name] セクションを追記する（YMM4 と同じ追加方式）。
+
+    既存内容は一切書き換えず末尾に足すだけ。改行が無い終端でも壊れないよう、
+    必要に応じて空行を補ってから追記する。
+    """
+    ini_path = Path(ini_path)
+    name = (name or "").strip()
+    if not name or any(c in _INI_NAME_BAD for c in name):
+        raise ValueError("プリセット名に使用できない文字が含まれています（[] = 改行 は不可）")
+
+    lines = [f"[{name}]"]
+    for ini_key, filename in parts.items():
+        if filename:
+            lines.append(f"{ini_key}={filename}")
+    block = "\n".join(lines) + "\n"
+
+    prefix = ""
+    if ini_path.exists():
+        existing = ini_path.read_text(encoding="utf-8-sig")
+        if existing and not existing.endswith("\n"):
+            prefix = "\n\n"
+        elif existing and not existing.endswith("\n\n"):
+            prefix = "\n"
+    # 既存の BOM は read_text(utf-8-sig) で除去されるが、追記は本文のみなので
+    # ファイル先頭の BOM は維持される（'a' で本文だけ足す）。
+    with open(ini_path, "a", encoding="utf-8") as f:
+        f.write(prefix + block)

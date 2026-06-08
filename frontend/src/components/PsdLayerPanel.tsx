@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, PsdLayerNode } from "@/lib/api";
 import { useOverrideEditor } from "./OverrideEditorContext";
+import SavePresetForm from "./SavePresetForm";
 
 // レイヤーID -> {parent, siblings(ツリー順), node} の索引。ソロ/スクロール計算に使う。
 interface LayerIndex {
@@ -57,7 +58,7 @@ function diffDelta(base: Set<string>, next: Set<string>, allIds: string[]): Reco
 
 /** PSD立ち絵のパーツ個別変更パネル。YMM4互換のレイヤー表示操作を提供する。 */
 export default function PsdLayerPanel() {
-  const { characterName, effectivePreset, psdLayerOverrides, setPsdLayers, tachieType } = useOverrideEditor();
+  const { characterName, effectivePreset, psdLayerOverrides, setPsdLayers, tachieType, onPresetsChanged } = useOverrideEditor();
   const [tree, setTree] = useState<PsdLayerNode[]>([]);
   const [baseLayers, setBaseLayers] = useState<Set<string>>(new Set());
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -264,6 +265,17 @@ export default function PsdLayerPanel() {
           renderNodes(tree, 0)
         )}
       </div>
+      <SavePresetForm
+        onSave={async (name) => {
+          const r = await api.savePsdPreset(characterName, {
+            name,
+            preset_name: effectivePreset || null,
+            psd_layer_overrides: psdLayerOverrides,
+          });
+          return r.preset_names;
+        }}
+        onSaved={(_n, names) => onPresetsChanged?.(characterName, names)}
+      />
     </div>
   );
 }
