@@ -114,6 +114,16 @@ export interface ResolutionInfo {
   source: "override" | "gradient" | "mapping";
 }
 
+export interface GuideInfo {
+  kind: "compound3" | "compound2" | "single" | "default" | "preset" | "gradient";
+  emotions: string[];
+  tier: "weak" | "mid" | "strong" | null;
+  preset_name: string | null;
+  overridden: boolean;
+  override_kind: "emotion" | "preset" | null;
+  gradient_type?: "sudden" | "gradual" | null;
+}
+
 export interface AnalysisItem {
   character_name: string;
   serif: string;
@@ -126,6 +136,7 @@ export interface AnalysisItem {
   gradient?: GradientInfo | null;
   decay?: DecayInfo | null;
   resolution?: ResolutionInfo | null;
+  guide?: GuideInfo | null;
 }
 
 export interface DialogueGroupInfo {
@@ -312,6 +323,28 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     });
+  },
+
+  /** パーツ個別変更の状態を新しい PNG プリセットとして preset.ini 末尾に追記する。 */
+  savePngPreset(
+    characterName: string,
+    body: { name: string; base_preset_name?: string | null; part_overrides?: Record<string, string> }
+  ) {
+    return request<{ status: string; name: string; preset_names: string[] }>(
+      `/api/preset/${encodeURIComponent(characterName)}/save-preset`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  },
+
+  /** レイヤー変更の状態を新しい PSD プリセットとして -ymm.json 末尾に追記する。 */
+  savePsdPreset(
+    characterName: string,
+    body: { name: string; preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<{ status: string; name: string; preset_names: string[] }>(
+      `/api/psd/${encodeURIComponent(characterName)}/save-preset`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
   },
 
   generateTemplate() {
