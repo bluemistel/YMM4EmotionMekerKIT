@@ -114,6 +114,16 @@ export interface ResolutionInfo {
   source: "override" | "gradient" | "mapping";
 }
 
+export interface GuideInfo {
+  kind: "compound3" | "compound2" | "single" | "default" | "preset" | "gradient";
+  emotions: string[];
+  tier: "weak" | "mid" | "strong" | null;
+  preset_name: string | null;
+  overridden: boolean;
+  override_kind: "emotion" | "preset" | null;
+  gradient_type?: "sudden" | "gradual" | null;
+}
+
 export interface AnalysisItem {
   character_name: string;
   serif: string;
@@ -126,6 +136,7 @@ export interface AnalysisItem {
   gradient?: GradientInfo | null;
   decay?: DecayInfo | null;
   resolution?: ResolutionInfo | null;
+  guide?: GuideInfo | null;
 }
 
 export interface DialogueGroupInfo {
@@ -142,6 +153,7 @@ export interface OverrideInfo {
   part_overrides: Record<string, string> | null;
   locked: boolean;
   hold_previous?: boolean;
+  hold_turns?: number;
   emotion_labels?: string[] | null;
   emotion_tier?: string | null;
   psd_layer_overrides?: Record<string, boolean> | null;
@@ -314,6 +326,28 @@ export const api = {
     });
   },
 
+  /** パーツ個別変更の状態を新しい PNG プリセットとして preset.ini 末尾に追記する。 */
+  savePngPreset(
+    characterName: string,
+    body: { name: string; base_preset_name?: string | null; part_overrides?: Record<string, string> }
+  ) {
+    return request<{ status: string; name: string; preset_names: string[] }>(
+      `/api/preset/${encodeURIComponent(characterName)}/save-preset`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  },
+
+  /** レイヤー変更の状態を新しい PSD プリセットとして -ymm.json 末尾に追記する。 */
+  savePsdPreset(
+    characterName: string,
+    body: { name: string; preset_name?: string | null; psd_layer_overrides?: Record<string, boolean> }
+  ) {
+    return request<{ status: string; name: string; preset_names: string[] }>(
+      `/api/psd/${encodeURIComponent(characterName)}/save-preset`,
+      { method: "POST", body: JSON.stringify(body) }
+    );
+  },
+
   generateTemplate() {
     return request<{ settings: Record<string, unknown>; characters: Record<string, unknown> }>(
       "/api/config/generate-template",
@@ -415,7 +449,7 @@ export const api = {
     );
   },
 
-  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
+  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; hold_turns?: number; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
     return request<{ status: string }>(
       `/api/override/${voiceIndex}`,
       {
@@ -510,7 +544,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.6";
+export const APP_VERSION_FALLBACK = "1.0.7";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

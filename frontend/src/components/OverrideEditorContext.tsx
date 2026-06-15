@@ -69,6 +69,8 @@ interface OverrideEditorValue {
   partOverrides: Record<string, string>;
   psdLayerOverrides: Record<string, boolean>;
   holdPrevious: boolean;
+  /** 「前回の表情を保つ」の持続ターン数（0=従来＝次の自台詞まで）。 */
+  holdTurns: number;
   scoresOpen: boolean;
   setScoresOpen: (o: boolean) => void;
   saving: boolean;
@@ -81,7 +83,11 @@ interface OverrideEditorValue {
   setPart: (field: string, value: string) => void;
   setPsdLayers: (next: Record<string, boolean>) => void;
   selectMode: (hold: boolean) => void;
+  /** 持続ターン数を変更して保存する（「前回の表情を保つ」選択中のみ）。 */
+  updateHoldTurns: (n: number) => void;
   resetOverride: () => void;
+  /** 保存後に親の configs[char].preset_names を更新する。 */
+  onPresetsChanged?: (characterName: string, names: string[]) => void;
 }
 
 const Ctx = createContext<OverrideEditorValue | null>(null);
@@ -101,7 +107,13 @@ interface ProviderProps {
   basePresetName?: string | null;
   tachieType?: string;
   psdPath?: string | null;
+  /** 現在 OFF（検出なし等で無効化）になっている感情ラベル。 */
+  disabledEmotions?: string[];
+  /** 無効化中の感情を「感情で指定」で選んだとき、その感情を有効化する。 */
+  onEnableEmotion?: (key: string) => void;
   onOverrideChange?: () => void;
+  /** 新規プリセット保存後、preset_names の更新を親へ通知する。 */
+  onPresetsChanged?: (characterName: string, names: string[]) => void;
   children: ReactNode;
 }
 
@@ -114,7 +126,10 @@ export function OverrideEditorProvider({
   basePresetName,
   tachieType = "png",
   psdPath = null,
+  disabledEmotions = [],
+  onEnableEmotion,
   onOverrideChange,
+  onPresetsChanged,
   children,
 }: ProviderProps) {
   const [specMode, setSpecMode] = useState<SpecMode>("preset");
@@ -124,6 +139,7 @@ export function OverrideEditorProvider({
   const [partOverrides, setPartOverrides] = useState<Record<string, string>>({});
   const [psdLayerOverrides, setPsdLayerOverrides] = useState<Record<string, boolean>>({});
   const [holdPrevious, setHoldPrevious] = useState(false);
+  const [holdTurns, setHoldTurns] = useState(0);
   const [scoresOpen, setScoresOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const saveTimer = useRef<number | null>(null);
@@ -139,6 +155,7 @@ export function OverrideEditorProvider({
     setPartOverrides({});
     setPsdLayerOverrides({});
     setHoldPrevious(false);
+    setHoldTurns(0);
     setScoresOpen(false);
     if (voiceIndex == null) return;
     api
@@ -148,6 +165,7 @@ export function OverrideEditorProvider({
         const o = r.overrides[String(voiceIndex)] || r.overrides[voiceIndex as unknown as string];
         if (o) {
           if (o.hold_previous) setHoldPrevious(true);
+          if (typeof o.hold_turns === "number") setHoldTurns(o.hold_turns);
           if (o.emotion_labels && o.emotion_labels.length) {
             setSpecMode("emotion");
             setEmotionOrder(o.emotion_labels);
@@ -236,6 +254,10 @@ export function OverrideEditorProvider({
       if (prev.includes(key)) next = prev.filter((k) => k !== key);
       else if (prev.length >= 3) next = prev;
       else next = [...prev, key];
+      // 追加された感情が「無効化中（検出なしで自動OFF等）」なら、その感情を有効化する
+      // （感情マッピングに行が出るようにし、自動OFFも解除する）。
+      const added = !prev.includes(key) && next.includes(key);
+      if (added && disabledEmotions.includes(key)) onEnableEmotion?.(key);
       scheduleSave({ specMode: "emotion", overridePreset, emotionOrder: next, emotionTier, partOverrides, psdLayerOverrides });
       return next;
     });
@@ -267,8 +289,9 @@ export function OverrideEditorProvider({
     setSaving(true);
     try {
       if (hold) {
-        await api.setOverride(voiceIndex, { hold_previous: true });
+        await api.setOverride(voiceIndex, { hold_previous: true, hold_turns: 0 });
         setHoldPrevious(true);
+        setHoldTurns(0);
         setOverridePresetState("");
         setEmotionOrder([]);
         setEmotionTierState("mid");
@@ -277,11 +300,28 @@ export function OverrideEditorProvider({
       } else {
         await api.deleteOverride(voiceIndex);
         setHoldPrevious(false);
+        setHoldTurns(0);
       }
       onOverrideChange?.();
     } finally {
       setSaving(false);
     }
+  }
+
+  // 持続ターン数の変更（「前回の表情を保つ」選択中のみ）。デバウンス保存。
+  function updateHoldTurns(n: number) {
+    const turns = Math.max(0, Math.floor(n) || 0);
+    setHoldTurns(turns);
+    if (voiceIndex == null) return;
+    if (saveTimer.current) window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(async () => {
+      try {
+        await api.setOverride(voiceIndex, { hold_previous: true, hold_turns: turns });
+        onOverrideChange?.();
+      } catch {
+        // non-fatal
+      }
+    }, 450);
   }
 
   async function resetOverride() {
@@ -295,6 +335,7 @@ export function OverrideEditorProvider({
       setEmotionTierState("mid");
       setPartOverrides({});
       setPsdLayerOverrides({});
+      setHoldTurns(0);
       onOverrideChange?.();
     } finally {
       setSaving(false);
@@ -330,6 +371,7 @@ export function OverrideEditorProvider({
     partOverrides,
     psdLayerOverrides,
     holdPrevious,
+    holdTurns,
     scoresOpen,
     setScoresOpen,
     saving,
@@ -341,7 +383,9 @@ export function OverrideEditorProvider({
     setPart,
     setPsdLayers,
     selectMode,
+    updateHoldTurns,
     resetOverride,
+    onPresetsChanged,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

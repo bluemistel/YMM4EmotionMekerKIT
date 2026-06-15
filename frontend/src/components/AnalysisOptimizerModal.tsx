@@ -66,7 +66,7 @@ export default function AnalysisOptimizerModal({ open, initial, onStart, onSkip 
 
   function handleStart() {
     onStart({
-      context_turns: kakeai ? 2 : 0,
+      context_turns: kakeai ? 1 : 0,
       context_speaker_labels: kakeai,
       reader_weight: merihari,
       postprocess_enabled: postprocess,
@@ -104,7 +104,7 @@ export default function AnalysisOptimizerModal({ open, initial, onStart, onSkip 
               キャラ同士の会話で、相手のフリへのリアクション感情を重視します。1人の朗読・ナレーション主体なら OFF。
             </p>
             <p style={{ fontSize: NOTE, color: "var(--text-faint)", marginTop: "2px" }}>
-              対応設定: 「文脈ターン数」(ON=2/OFF=0) ＋「話者名で文脈を区別する」(ON/OFF)
+              対応設定: 「文脈ターン数」(ON=1/OFF=0) ＋「話者名で文脈を区別する」(ON/OFF)
             </p>
           </div>
 

@@ -31,6 +31,7 @@ interface Props {
   onSaved?: () => void;
   postprocessEnabled?: boolean;
   disabledEmotions?: string[];
+  compoundAutoMirror?: boolean;
 }
 
 export default function MappingPanel({
@@ -45,6 +46,7 @@ export default function MappingPanel({
   onSaved,
   postprocessEnabled,
   disabledEmotions,
+  compoundAutoMirror,
 }: Props) {
   function SegBtn({ value, label }: { value: "mapping" | "override"; label: string }) {
     const on = tab === value;
@@ -107,6 +109,7 @@ export default function MappingPanel({
           onSaved={onSaved}
           postprocessEnabled={postprocessEnabled}
           disabledEmotions={disabledEmotions}
+          compoundAutoMirror={compoundAutoMirror}
         />
       ) : analysisItem && selectedVoiceIndex !== null ? (
         <VoiceDetailPanel />

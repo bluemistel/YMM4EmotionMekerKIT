@@ -111,10 +111,14 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [speakerLabels, setSpeakerLabels] = useState(true);
   const [contextGapSeconds, setContextGapSeconds] = useState(0.4);
   const [readerWeight, setReaderWeight] = useState(0);
+  const [intensityWeakMax, setIntensityWeakMax] = useState(0.5);
+  const [intensityStrongMin, setIntensityStrongMin] = useState(0.83);
   const [disabledEmo, setDisabledEmo] = useState<Set<string>>(new Set());
   const [emoWarn, setEmoWarn] = useState("");
   const [showOptimizer, setShowOptimizer] = useState(true);
   const [autoDisableUndetected, setAutoDisableUndetected] = useState(true);
+  // 複合感情の自動ミラー登録（全般タブ・既定ON。トグルで即保存）。
+  const [compoundAutoMirror, setCompoundAutoMirror] = useState(true);
   // 個人適応学習(#1)
   const [personalizationEnabled, setPersonalizationEnabled] = useState(false);
   const [personalizationStrength, setPersonalizationStrength] = useState(0.5);
@@ -148,10 +152,13 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setSpeakerLabels(s.context_speaker_labels !== false);
         setContextGapSeconds(typeof s.context_gap_seconds === "number" ? (s.context_gap_seconds as number) : 0.4);
         setReaderWeight(typeof s.reader_weight === "number" ? (s.reader_weight as number) : 0);
+        setIntensityWeakMax(typeof s.intensity_weak_max === "number" ? (s.intensity_weak_max as number) : 0.5);
+        setIntensityStrongMin(typeof s.intensity_strong_min === "number" ? (s.intensity_strong_min as number) : 0.83);
         setDisabledEmo(new Set(Array.isArray(s.disabled_emotions) ? (s.disabled_emotions as string[]) : []));
         setEmoWarn("");
         setAutoDisableUndetected(s.auto_disable_undetected !== false);
         setShowOptimizer(s.show_optimizer_on_load !== false);
+        setCompoundAutoMirror(s.compound_auto_mirror !== false);
         setPersonalizationEnabled(s.personalization_enabled === true);
         setPersonalizationStrength(typeof s.personalization_strength === "number" ? (s.personalization_strength as number) : 0.5);
         setPostProcess({
@@ -234,6 +241,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         context_speaker_labels: speakerLabels,
         context_gap_seconds: contextGapSeconds,
         reader_weight: readerWeight,
+        intensity_weak_max: intensityWeakMax,
+        intensity_strong_min: intensityStrongMin,
         disabled_emotions: Array.from(disabledEmo),
         auto_disable_undetected: autoDisableUndetected,
         show_optimizer_on_load: showOptimizer,
@@ -359,8 +368,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
               </nav>
             </div>
 
-            {/* 右コンテンツ */}
-            <div className="flex-1 overflow-y-auto p-7" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
+            {/* 右コンテンツ（スクロール領域 ＋ 下部固定の保存バー） */}
+            <div className="flex-1 flex flex-col overflow-hidden" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
+              <div className="flex-1 overflow-y-auto p-7" style={{ minHeight: 0 }}>
               <div className="flex justify-between items-center mb-5">
                 <h3 className="display-text" style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
                   {SECTION_TITLE[section]}
@@ -372,6 +382,26 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
               {section === "general" && (
                 <div>
+                  <h3 style={h3}>複合感情</h3>
+                  <label className="flex items-center gap-2 cursor-pointer mb-1" style={{ fontSize: "0.82rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={compoundAutoMirror}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setCompoundAutoMirror(v);
+                        api.updateSettings({ compound_auto_mirror: v }).catch(() => {});
+                      }}
+                      className="checkbox-custom"
+                    />
+                    <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      複合感情の自動ミラー登録
+                    </span>
+                  </label>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "20px" }}>
+                    複合感情にプリセットを登録すると、入れ替えた順序（例「喜+驚」→「驚+喜」、3感情は全6順列）へ自動で同じプリセットを登録します。実行時はスコア順でキーが決まるため、全順列を埋めておくと確実に反映されます。
+                  </p>
+
                   <h3 style={h3}>YMM4 の場所</h3>
                   <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
                     YukkuriMovieMaker.exe のパスを指定すると、立ち絵のデフォルト状態を YMM4 の設定から取得してプレビューに反映します。
@@ -388,12 +418,6 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     <button onClick={handleBrowse} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px", whiteSpace: "nowrap" }}>
                       参照
                     </button>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                      {saving ? "保存中..." : "保存"}
-                    </button>
-                    {savedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>}
                   </div>
                 </div>
               )}
@@ -488,6 +512,33 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                         <span className="label-hint">0=書き手の感情 / 1=視聴者から見た感情。立ち絵の見えに合わせて調整</span>
                       </span>
                       <input type="range" min={0} max={1} step={0.05} value={readerWeight} onChange={(e) => setReaderWeight(parseFloat(e.target.value))} style={{ width: "100%", maxWidth: "420px" }} />
+                    </div>
+                    <div className="col-span-2">
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                        感情の強度しきい値（弱 / 強）
+                        <span className="label-hint">単独感情のスコアで「弱・中・強」を切り替える境界。スコア&lt;弱=弱、強≦スコア=強、その間=中。強度別プリセット（弱/中/強）の選択に使用</span>
+                      </span>
+                      <div className="flex items-center gap-5" style={{ maxWidth: "420px" }}>
+                        <label style={{ flex: 1, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+                          弱のしきい値 &lt; <span className="mono-text">{intensityWeakMax.toFixed(2)}</span>
+                          <input
+                            type="range" min={0.05} max={0.95} step={0.01} value={intensityWeakMax}
+                            onChange={(e) => setIntensityWeakMax(Math.min(parseFloat(e.target.value), intensityStrongMin - 0.01))}
+                            style={{ width: "100%", marginTop: "2px" }}
+                          />
+                        </label>
+                        <label style={{ flex: 1, fontSize: "0.76rem", color: "var(--text-secondary)" }}>
+                          強のしきい値 ≧ <span className="mono-text">{intensityStrongMin.toFixed(2)}</span>
+                          <input
+                            type="range" min={0.05} max={0.95} step={0.01} value={intensityStrongMin}
+                            onChange={(e) => setIntensityStrongMin(Math.max(parseFloat(e.target.value), intensityWeakMax + 0.01))}
+                            style={{ width: "100%", marginTop: "2px" }}
+                          />
+                        </label>
+                      </div>
+                      <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "3px" }}>
+                        既定値は WRIME 基準（弱 0.50 / 強 0.83）。
+                      </p>
                     </div>
                   </div>
 
@@ -598,13 +649,6 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-3 mt-4">
-                    <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                      {modelSaving ? "保存中..." : "保存"}
-                    </button>
-                    {modelSavedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>}
-                  </div>
-
                   {/* 感情後処理（このセクションの最下部） */}
                   <div style={{ borderTop: "1px solid var(--border-dim)", marginTop: "20px", paddingTop: "16px" }}>
                     <PostProcessSettings settings={postProcess} onSettingsChange={setPostProcess} />
@@ -675,6 +719,12 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.7</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>パーツ個別変更をプリセットとして保存</strong>：「パーツ個別変更」で調整した状態に名前を付けて、YMM4 立ち絵プリセット（動く立ち絵の preset.ini／PSDの -ymm.json）の末尾へ追加登録。登録後はファイルを再読み込みしてアプリに即反映（YMM4 はプリセット一覧を起動中に保持するため、YMM4 を終了した状態での登録を推奨）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>複合感情の自動ミラー登録</strong>：複合感情にプリセットを登録すると、入れ替えた順序（例「喜+驚」→「驚+喜」、3感情は全6順列）へ自動で同じプリセットを登録（設定→全般で切替・既定ON）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>設定画面の保存ボタンを下部に常駐</strong>：スクロールが必要な場合でも「保存」ボタンが常に下部に表示され、保存のし忘れを防止</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.6</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>Python不要で起動</strong>：バックエンドを同梱し、Python 未導入の環境でもそのまま動作（インストーラ版）</li>
@@ -715,6 +765,36 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                   <button onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)} className="btn-secondary" style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
                     バグ報告フォームを開く ↗
                   </button>
+                </div>
+              )}
+              </div>{/* /スクロール領域 */}
+
+              {/* 下部に常駐する保存バー（スクロールしても隠れない） */}
+              {(section === "general" || section === "analysis") && (
+                <div
+                  className="flex items-center gap-3"
+                  style={{
+                    flexShrink: 0,
+                    borderTop: "1px solid var(--border-dim)",
+                    padding: "12px 28px",
+                    background: "var(--bg-panel)",
+                  }}
+                >
+                  {section === "general" ? (
+                    <>
+                      <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                        {saving ? "保存中..." : "保存"}
+                      </button>
+                      {savedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                        {modelSaving ? "保存中..." : "保存"}
+                      </button>
+                      {modelSavedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>}
+                    </>
+                  )}
                 </div>
               )}
             </div>

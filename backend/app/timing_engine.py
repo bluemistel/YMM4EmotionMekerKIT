@@ -34,6 +34,7 @@ def compute_face_placements(
     max_gap_extend: int = 300,
     hold_indices: set[int] | None = None,
     valid_intervals: list[tuple[int, int]] | None = None,
+    hold_end_frames: dict[int, int] | None = None,
 ) -> list[FacePlacement]:
     """
     Compute TachieFaceItem placements from voice items and emotion analysis results.
@@ -48,6 +49,12 @@ def compute_face_placements(
             previous (pending) face item is extended to cover it instead of placing a
             new item. If no previous item exists (e.g. the first voice), it falls back
             to placing its own expression normally.
+        hold_end_frames: Optional map voice_index -> absolute end frame for a held
+            voice whose "持続ターン数" expired. When present for a held voice, the
+            previous (pending) item is finalized exactly at that frame and flushed,
+            so the held expression ends there instead of extending to the
+            character's own next line. Computed globally by the caller (it needs the
+            cross-character timeline order, which this per-character pass lacks).
 
     Returns:
         List of FacePlacement objects.
@@ -56,6 +63,7 @@ def compute_face_placements(
         return []
 
     hold_indices = hold_indices or set()
+    hold_end_frames = hold_end_frames or {}
     sorted_voices = sorted(voice_items, key=lambda v: v.frame)
     placements: list[FacePlacement] = []
     pending: FacePlacement | None = None
@@ -102,8 +110,17 @@ def compute_face_placements(
         # "前回の表情を保つ": extend the previous item over this voice and skip
         # placing a new one. With no previous item, fall through to normal handling.
         if voice.index in hold_indices and pending is not None:
-            pending.length = clamped_len(pending.frame, voice.frame + voice.length)
-            pending.source_serifs.append(voice.serif)
+            cap = hold_end_frames.get(voice.index)
+            if cap is not None:
+                # 持続ターン数で打ち切り: 保持表情をここ（別キャラ N 本目の終端）で確定
+                # 終了し、以降は別アイテム扱い（cap〜次の自キャラ台詞は表情アイテムなし）。
+                pending.length = clamped_len(pending.frame, cap)
+                pending.source_serifs.append(voice.serif)
+                placements.append(pending)
+                pending = None
+            else:
+                pending.length = clamped_len(pending.frame, voice.frame + voice.length)
+                pending.source_serifs.append(voice.serif)
             continue
 
         result = emotion_results.get(voice.index)

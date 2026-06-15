@@ -11,9 +11,18 @@ INTENSITY_STRONG_MIN = 0.83
 
 
 class ExpressionMapper:
-    def __init__(self, char_config: CharacterConfig, presets: PresetCollection):
+    def __init__(
+        self,
+        char_config: CharacterConfig,
+        presets: PresetCollection,
+        weak_max: float = INTENSITY_WEAK_MAX,
+        strong_min: float = INTENSITY_STRONG_MIN,
+    ):
         self.char_config = char_config
         self.presets = presets
+        # 単独感情の弱/強しきい値（ユーザー設定で調整可能）。
+        self.weak_max = weak_max
+        self.strong_min = strong_min
 
     def resolve_slot(
         self, emotion: EmotionResult, threshold: float = 0.3
@@ -50,9 +59,9 @@ class ExpressionMapper:
         # 3. Single emotion: highest score（強度別の弱/中/強で分岐）
         best_emotion = ranked[0][0]
         best_score = ranked[0][1]
-        if best_score >= INTENSITY_STRONG_MIN:
+        if best_score >= self.strong_min:
             tier = "strong"
-        elif best_score < INTENSITY_WEAK_MAX:
+        elif best_score < self.weak_max:
             tier = "weak"
         else:
             tier = "mid"
@@ -69,6 +78,35 @@ class ExpressionMapper:
 
         # 4. Default
         return ("default", self._default_preset())
+
+    def detect_slot(self, emotion: EmotionResult, threshold: float = 0.3) -> dict:
+        """スコア＋しきい値から「該当する感情の組み合わせ/単独の強弱」を返す（表示ガイド用）。
+
+        resolve_slot の『検出部分』と同じ判定基準（compound_max での複合化、上位3感情、
+        弱/強しきい値）を使う。マッピング(プリセット)の有無には依存しない純粋な検出のみ。
+        プリセット割り当て（遡りフォールバック含む）は resolution 側で別途行う。
+        戻り値: {"kind": "compound3"|"compound2"|"single"|"default",
+                 "emotions": [感情キー...], "tier": "weak"|"mid"|"strong"|None}
+        """
+        active = emotion.above_threshold(threshold)
+        if not active:
+            return {"kind": "default", "emotions": [], "tier": None}
+        ranked = sorted(active.items(), key=lambda x: x[1], reverse=True)
+        top = ranked[0][1]
+        compound_max = self.char_config.compound_max_score
+        if top <= compound_max and len(ranked) >= 3:
+            return {"kind": "compound3", "emotions": [r[0] for r in ranked[:3]], "tier": None}
+        if top <= compound_max and len(ranked) >= 2:
+            return {"kind": "compound2", "emotions": [r[0] for r in ranked[:2]], "tier": None}
+        emo = ranked[0][0]
+        score = ranked[0][1]
+        if score >= self.strong_min:
+            tier = "strong"
+        elif score < self.weak_max:
+            tier = "weak"
+        else:
+            tier = "mid"
+        return {"kind": "single", "emotions": [emo], "tier": tier}
 
     def map_emotion(self, emotion: EmotionResult, threshold: float = 0.3) -> str:
         return self.resolve_slot(emotion, threshold)[1]

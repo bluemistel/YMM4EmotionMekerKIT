@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import PresetPreview from "./PresetPreview";
 import PsdLayerPanel from "./PsdLayerPanel";
+import SavePresetForm from "./SavePresetForm";
 import { useOverrideEditor, PART_FIELDS, NONE_PART } from "./OverrideEditorContext";
 
 function basename(p: string | null | undefined): string {
@@ -36,6 +37,7 @@ export default function PreviewPartsPanel() {
     effectivePreset,
     tachieType,
     setPart,
+    onPresetsChanged,
   } = useOverrideEditor();
   const isPsd = tachieType === "psd";
 
@@ -166,6 +168,19 @@ export default function PreviewPartsPanel() {
                 );
               })}
             </div>
+            {effectivePreset && (
+              <SavePresetForm
+                onSave={async (name) => {
+                  const r = await api.savePngPreset(characterName, {
+                    name,
+                    base_preset_name: effectivePreset,
+                    part_overrides: previewOverrides,
+                  });
+                  return r.preset_names;
+                }}
+                onSaved={(_n, names) => onPresetsChanged?.(characterName, names)}
+              />
+            )}
           </div>
           )}
         </div>
