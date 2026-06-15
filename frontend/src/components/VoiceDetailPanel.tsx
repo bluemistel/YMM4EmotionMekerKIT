@@ -18,6 +18,8 @@ export default function VoiceDetailPanel() {
     emotionOrder,
     emotionTier,
     holdPrevious,
+    holdTurns,
+    updateHoldTurns,
     scoresOpen,
     setScoresOpen,
     saving,
@@ -148,10 +150,27 @@ export default function VoiceDetailPanel() {
         </div>
 
         {holdPrevious ? (
-          <p className="animate-fadeIn" style={{ fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.7, padding: "4px 2px" }}>
-            この台詞では新しい表情アイテムを作らず、<strong style={{ color: "var(--text-secondary)" }}>前の台詞の表情</strong>をこの台詞の終端フレームまで継続します。
-            （先頭の台詞など直前の表情が無い場合は、その台詞自身の表情を配置します。）
-          </p>
+          <div className="animate-fadeIn space-y-2">
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.7, padding: "4px 2px" }}>
+              この台詞では新しい表情アイテムを作らず、<strong style={{ color: "var(--text-secondary)" }}>前の台詞の表情</strong>を継続します。
+              （先頭の台詞など直前の表情が無い場合は、その台詞自身の表情を配置します。）
+            </p>
+            <div className="flex items-center gap-2" style={{ padding: "0 2px" }}>
+              <span className="label-text" style={{ flex: 1 }}>
+                持続ターン数
+                <span className="label-hint">0=次の自分の台詞まで（従来）／1以上=後続の別キャラ台詞N本で終了</span>
+              </span>
+              <input
+                type="number"
+                min={0}
+                max={999}
+                value={holdTurns}
+                onChange={(e) => updateHoldTurns(Math.max(0, parseInt(e.target.value) || 0))}
+                className="input-sm"
+                style={{ width: "56px" }}
+              />
+            </div>
+          </div>
         ) : (
           <>
             {/* 感情で指定 / プリセットで指定 */}

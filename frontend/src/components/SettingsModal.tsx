@@ -117,6 +117,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [emoWarn, setEmoWarn] = useState("");
   const [showOptimizer, setShowOptimizer] = useState(true);
   const [autoDisableUndetected, setAutoDisableUndetected] = useState(true);
+  // 複合感情の自動ミラー登録（全般タブ・既定ON。トグルで即保存）。
+  const [compoundAutoMirror, setCompoundAutoMirror] = useState(true);
   // 個人適応学習(#1)
   const [personalizationEnabled, setPersonalizationEnabled] = useState(false);
   const [personalizationStrength, setPersonalizationStrength] = useState(0.5);
@@ -156,6 +158,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setEmoWarn("");
         setAutoDisableUndetected(s.auto_disable_undetected !== false);
         setShowOptimizer(s.show_optimizer_on_load !== false);
+        setCompoundAutoMirror(s.compound_auto_mirror !== false);
         setPersonalizationEnabled(s.personalization_enabled === true);
         setPersonalizationStrength(typeof s.personalization_strength === "number" ? (s.personalization_strength as number) : 0.5);
         setPostProcess({
@@ -365,8 +368,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
               </nav>
             </div>
 
-            {/* 右コンテンツ */}
-            <div className="flex-1 overflow-y-auto p-7" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
+            {/* 右コンテンツ（スクロール領域 ＋ 下部固定の保存バー） */}
+            <div className="flex-1 flex flex-col overflow-hidden" style={{ color: "var(--text-secondary)", fontSize: "0.875rem", lineHeight: "1.7" }}>
+              <div className="flex-1 overflow-y-auto p-7" style={{ minHeight: 0 }}>
               <div className="flex justify-between items-center mb-5">
                 <h3 className="display-text" style={{ fontFamily: "var(--font-display)", fontSize: "1.1rem", fontWeight: 600, color: "var(--text-primary)" }}>
                   {SECTION_TITLE[section]}
@@ -378,6 +382,26 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
               {section === "general" && (
                 <div>
+                  <h3 style={h3}>複合感情</h3>
+                  <label className="flex items-center gap-2 cursor-pointer mb-1" style={{ fontSize: "0.82rem" }}>
+                    <input
+                      type="checkbox"
+                      checked={compoundAutoMirror}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        setCompoundAutoMirror(v);
+                        api.updateSettings({ compound_auto_mirror: v }).catch(() => {});
+                      }}
+                      className="checkbox-custom"
+                    />
+                    <span style={{ color: "var(--text-secondary)", fontWeight: 600 }}>
+                      複合感情の自動ミラー登録
+                    </span>
+                  </label>
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "20px" }}>
+                    複合感情にプリセットを登録すると、入れ替えた順序（例「喜+驚」→「驚+喜」、3感情は全6順列）へ自動で同じプリセットを登録します。実行時はスコア順でキーが決まるため、全順列を埋めておくと確実に反映されます。
+                  </p>
+
                   <h3 style={h3}>YMM4 の場所</h3>
                   <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
                     YukkuriMovieMaker.exe のパスを指定すると、立ち絵のデフォルト状態を YMM4 の設定から取得してプレビューに反映します。
@@ -394,12 +418,6 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     <button onClick={handleBrowse} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "5px 12px", whiteSpace: "nowrap" }}>
                       参照
                     </button>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                      {saving ? "保存中..." : "保存"}
-                    </button>
-                    {savedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>}
                   </div>
                 </div>
               )}
@@ -631,13 +649,6 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     )}
                   </div>
 
-                  <div className="flex items-center gap-3 mt-4">
-                    <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
-                      {modelSaving ? "保存中..." : "保存"}
-                    </button>
-                    {modelSavedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>}
-                  </div>
-
                   {/* 感情後処理（このセクションの最下部） */}
                   <div style={{ borderTop: "1px solid var(--border-dim)", marginTop: "20px", paddingTop: "16px" }}>
                     <PostProcessSettings settings={postProcess} onSettingsChange={setPostProcess} />
@@ -708,6 +719,12 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.7</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>パーツ個別変更をプリセットとして保存</strong>：「パーツ個別変更」で調整した状態に名前を付けて、YMM4 立ち絵プリセット（動く立ち絵の preset.ini／PSDの -ymm.json）の末尾へ追加登録。登録後はファイルを再読み込みしてアプリに即反映（YMM4 はプリセット一覧を起動中に保持するため、YMM4 を終了した状態での登録を推奨）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>複合感情の自動ミラー登録</strong>：複合感情にプリセットを登録すると、入れ替えた順序（例「喜+驚」→「驚+喜」、3感情は全6順列）へ自動で同じプリセットを登録（設定→全般で切替・既定ON）</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>設定画面の保存ボタンを下部に常駐</strong>：スクロールが必要な場合でも「保存」ボタンが常に下部に表示され、保存のし忘れを防止</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.6</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>Python不要で起動</strong>：バックエンドを同梱し、Python 未導入の環境でもそのまま動作（インストーラ版）</li>
@@ -748,6 +765,36 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                   <button onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)} className="btn-secondary" style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
                     バグ報告フォームを開く ↗
                   </button>
+                </div>
+              )}
+              </div>{/* /スクロール領域 */}
+
+              {/* 下部に常駐する保存バー（スクロールしても隠れない） */}
+              {(section === "general" || section === "analysis") && (
+                <div
+                  className="flex items-center gap-3"
+                  style={{
+                    flexShrink: 0,
+                    borderTop: "1px solid var(--border-dim)",
+                    padding: "12px 28px",
+                    background: "var(--bg-panel)",
+                  }}
+                >
+                  {section === "general" ? (
+                    <>
+                      <button onClick={handleSave} disabled={saving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                        {saving ? "保存中..." : "保存"}
+                      </button>
+                      {savedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{savedMsg}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <button onClick={handleSaveModel} disabled={modelSaving} className="btn-primary" style={{ fontSize: "0.8rem", padding: "6px 16px" }}>
+                        {modelSaving ? "保存中..." : "保存"}
+                      </button>
+                      {modelSavedMsg && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{modelSavedMsg}</span>}
+                    </>
+                  )}
                 </div>
               )}
             </div>

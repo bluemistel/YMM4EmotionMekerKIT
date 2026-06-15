@@ -44,6 +44,19 @@ interface Props {
   postprocessEnabled?: boolean;
   /** 無効化された感情キー（マッピング行・複合組合せから除外する）。 */
   disabledEmotions?: string[];
+  /** 複合感情の自動ミラー登録（既定ON）。ONなら複合キーの全順列へ同値を一括適用。 */
+  compoundAutoMirror?: boolean;
+}
+
+/** 配列の全順列を返す（要素は相異なる前提＝複合キーは重複しない感情）。 */
+function permutations<T>(arr: T[]): T[][] {
+  if (arr.length <= 1) return [arr];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i++) {
+    const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+    for (const p of permutations(rest)) out.push([arr[i], ...p]);
+  }
+  return out;
 }
 
 const HIT_STYLE: React.CSSProperties = {
@@ -105,6 +118,7 @@ export default function EmotionMapping({
   onSaved,
   postprocessEnabled = false,
   disabledEmotions = [],
+  compoundAutoMirror = true,
 }: Props) {
   const [autoSavedMsg, setAutoSavedMsg] = useState("");
   const [expandedEmotions, setExpandedEmotions] = useState<Set<string>>(new Set());
@@ -235,22 +249,28 @@ export default function EmotionMapping({
     commitChange({ ...config, emotion_intensity_presets: map });
   }
 
+  // 複合キーの対象順序を返す。自動ミラーONなら全順列、OFFなら当該キーのみ。
+  function mirrorKeys(key: string): string[] {
+    if (!compoundAutoMirror) return [key];
+    return permutations(key.split("+")).map((p) => p.join("+"));
+  }
+
   function handleCompound2Change(key: string, presetName: string) {
-    const updated = {
-      ...config,
-      compound_presets_2: { ...config.compound_presets_2, [key]: presetName },
-    };
-    if (!presetName) delete updated.compound_presets_2[key];
-    commitChange(updated);
+    const map = { ...config.compound_presets_2 };
+    for (const k of mirrorKeys(key)) {
+      if (presetName) map[k] = presetName;
+      else delete map[k];
+    }
+    commitChange({ ...config, compound_presets_2: map });
   }
 
   function handleCompound3Change(key: string, presetName: string) {
-    const updated = {
-      ...config,
-      compound_presets_3: { ...config.compound_presets_3, [key]: presetName },
-    };
-    if (!presetName) delete updated.compound_presets_3[key];
-    commitChange(updated);
+    const map = { ...config.compound_presets_3 };
+    for (const k of mirrorKeys(key)) {
+      if (presetName) map[k] = presetName;
+      else delete map[k];
+    }
+    commitChange({ ...config, compound_presets_3: map });
   }
 
   function handleGradientPresetChange(key: string, presetName: string) {

@@ -153,6 +153,7 @@ export interface OverrideInfo {
   part_overrides: Record<string, string> | null;
   locked: boolean;
   hold_previous?: boolean;
+  hold_turns?: number;
   emotion_labels?: string[] | null;
   emotion_tier?: string | null;
   psd_layer_overrides?: Record<string, boolean> | null;
@@ -448,7 +449,7 @@ export const api = {
     );
   },
 
-  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
+  setOverride(voiceIndex: number, override: { preset_name?: string; part_overrides?: Record<string, string>; locked?: boolean; hold_previous?: boolean; hold_turns?: number; emotion_labels?: string[]; emotion_tier?: string; psd_layer_overrides?: Record<string, boolean> }) {
     return request<{ status: string }>(
       `/api/override/${voiceIndex}`,
       {
@@ -543,7 +544,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.6";
+export const APP_VERSION_FALLBACK = "1.0.7";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

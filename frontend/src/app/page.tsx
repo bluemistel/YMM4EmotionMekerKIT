@@ -58,6 +58,7 @@ export default function Home() {
   });
   const [ymm4ExePath, setYmm4ExePath] = useState("");
   const [disabledEmotions, setDisabledEmotions] = useState<string[]>([]);
+  const [compoundAutoMirror, setCompoundAutoMirror] = useState(true);
   const [showOptimizer, setShowOptimizer] = useState(true);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerInitial, setOptimizerInitial] = useState<OptimizerInitial>({ kakeai: true, readerWeight: 0.2, postprocess: false, contextGapSeconds: 0.4 });
@@ -108,6 +109,7 @@ export default function Home() {
     if (Array.isArray(settings.disabled_emotions)) {
       setDisabledEmotions(settings.disabled_emotions as string[]);
     }
+    setCompoundAutoMirror(settings.compound_auto_mirror !== false);
     setShowOptimizer(settings.show_optimizer_on_load !== false);
     const turns = typeof settings.context_turns === "number" ? (settings.context_turns as number) : 2;
     const speaker = settings.context_speaker_labels !== false;
@@ -493,6 +495,7 @@ export default function Home() {
                     onSaved={refreshResolution}
                     postprocessEnabled={postProcessSettings.postprocess_enabled}
                     disabledEmotions={disabledEmotions}
+                    compoundAutoMirror={compoundAutoMirror}
                   />
                 )}
 

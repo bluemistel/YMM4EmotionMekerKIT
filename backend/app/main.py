@@ -188,6 +188,9 @@ class OverrideRequest(BaseModel):
     part_overrides: dict[str, str] | None = None
     locked: bool = True
     hold_previous: bool = False
+    # 「前回の表情を保つ」の持続ターン数。0=従来（自キャラの次台詞まで）。
+    # 1以上=後続の別キャラ台詞 N 本だけ保持し、N 本目の終端で終える。
+    hold_turns: int = 0
     # 感情で指定: クリック順（最大3）。感情マッピングで表情を解決する。
     emotion_labels: list[str] | None = None
     # 第1感情のみ選択時の強度（"weak"/"mid"/"strong"）。複数選択時は無視。
@@ -779,6 +782,8 @@ def update_settings(req: UpdateSettingsRequest):
         config.settings.personalization_enabled = bool(s["personalization_enabled"])
     if "personalization_strength" in s:
         config.settings.personalization_strength = max(0.0, min(1.0, float(s["personalization_strength"])))
+    if "compound_auto_mirror" in s:
+        config.settings.compound_auto_mirror = bool(s["compound_auto_mirror"])
 
     # 感情分析モデル / LLM API キー。変更時は analyzer キャッシュを破棄して
     # 次回分析で新しいプロバイダ/キーが確実に使われるようにする。
@@ -884,6 +889,7 @@ def set_override(voice_index: int, req: OverrideRequest):
         "part_overrides": req.part_overrides,
         "locked": req.locked,
         "hold_previous": req.hold_previous,
+        "hold_turns": req.hold_turns,
         "emotion_labels": req.emotion_labels,
         "emotion_tier": req.emotion_tier,
         "psd_layer_overrides": req.psd_layer_overrides,
@@ -1618,6 +1624,30 @@ def _compute_all_placements(
     # 立ち絵(TachieItem)の存在区間。表情アイテムの延長をこの区間にクリップする。
     tachie_map = project.get_tachie_intervals(timeline_index)
 
+    # 「前回の表情を保つ＋持続ターン数」の打ち切り終端を全キャラ横断の台詞順から
+    # 事前計算する（per-char の timing_engine は他キャラの台詞位置を知らないため）。
+    overrides_all: dict = _state.get("overrides", {})
+    global_sorted = sorted(voices, key=lambda v: v.frame)
+    hold_end_frames: dict[int, int] = {}
+    for i, v in enumerate(global_sorted):
+        ov = overrides_all.get(v.index) or overrides_all.get(str(v.index))
+        if not (ov and ov.get("hold_previous")):
+            continue
+        try:
+            n_turns = int(ov.get("hold_turns") or 0)
+        except (TypeError, ValueError):
+            n_turns = 0
+        if n_turns <= 0:
+            continue  # 0=従来挙動（自キャラの次台詞まで）
+        turns = 0
+        for nxt in global_sorted[i + 1:]:
+            if nxt.character_name == v.character_name:
+                break  # 自キャラの次台詞が優先。打ち切りせず従来挙動（entryなし）
+            turns += 1
+            if turns >= n_turns:
+                hold_end_frames[v.index] = nxt.frame + nxt.length  # N本目(別キャラ)の終端
+                break
+
     all_placements: list[FacePlacement] = []
     for char_name, char_voice_list in char_voices.items():
         char_config = config.characters.get(char_name)
@@ -1661,6 +1691,7 @@ def _compute_all_placements(
             max_gap_extend=config.settings.max_gap_extend,
             hold_indices=hold_indices,
             valid_intervals=tachie_map.get(char_name),
+            hold_end_frames=hold_end_frames,
         )
         all_placements.extend(placements)
 
@@ -1695,6 +1726,7 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "llm_api_key": config.settings.llm_api_key,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
+            "compound_auto_mirror": config.settings.compound_auto_mirror,
         },
         "characters": {
             name: {
@@ -1746,6 +1778,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         llm_api_key=settings_raw.get("llm_api_key", ""),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
+        compound_auto_mirror=settings_raw.get("compound_auto_mirror", True),
     )
     characters: dict[str, CharacterConfig] = {}
     for name, char_raw in data.get("characters", {}).items():

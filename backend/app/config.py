@@ -74,6 +74,10 @@ class Settings:
     # 個人適応学習(#1): 学習済みヘッドによる感情補正の有効化と強度。
     personalization_enabled: bool = False
     personalization_strength: float = 0.5
+    # 複合感情の自動ミラー登録: 「喜+驚」を登録すると「驚+喜」等の全順列にも
+    # 同じプリセットを自動登録する（既定ON）。マッピング登録の利便機能で、
+    # 感情解決ロジックには影響しない。
+    compound_auto_mirror: bool = True
 
 
 @dataclass
@@ -116,6 +120,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         llm_api_key=settings_raw.get("llm_api_key", ""),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
+        compound_auto_mirror=settings_raw.get("compound_auto_mirror", True),
     )
 
     characters: dict[str, CharacterConfig] = {}
@@ -171,6 +176,7 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "llm_api_key": config.settings.llm_api_key,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
+            "compound_auto_mirror": config.settings.compound_auto_mirror,
         },
         "characters": {},
     }
