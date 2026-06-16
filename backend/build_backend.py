@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """バックエンドを PyInstaller で単体実行ファイル(onedir)にビルドする。
 
 Windows では、前回ビルドした `ymm4-backend.exe` が起動したままだと

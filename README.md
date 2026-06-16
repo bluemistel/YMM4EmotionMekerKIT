@@ -153,4 +153,16 @@ YMM4EmotionMekerKIT/
 
 ## ライセンス
 
-MIT License
+本ソフトウェア（YMM4 EmotionMaker KIT）は **GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）** のもとで公開しています。全文は [LICENSE](LICENSE) を参照してください。
+
+> v1.0.7 までは MIT License で公開していました。**v1.0.8 以降は AGPL-3.0-or-later** に変更しています（過去版はその版に限り MIT のままです）。
+
+### サードパーティ
+
+同梱・依存するライブラリ、および利用する感情分析モデル・データセットのライセンスと帰属は [THIRD-PARTY-LICENSES.md](THIRD-PARTY-LICENSES.md) に記載しています。主なものは次のとおりです。
+
+- 感情分析モデル: `patrickramos/bert-base-japanese-v2-wrime-fine-tune`（**CC BY-SA 3.0**、実行時に各端末へダウンロード／本体には未同梱）
+- データセット: [WRIME](https://github.com/ids-cv/wrime)（**CC BY-NC-ND 4.0**、非営利・改変不可）
+- 主要ライブラリ: PyTorch / Transformers（BSD・Apache-2.0）、FastAPI / Uvicorn ほか（MIT・BSD）、Next.js / React / Electron / Tailwind CSS（MIT）
+
+本ソフトウェアは無償で公開しています。

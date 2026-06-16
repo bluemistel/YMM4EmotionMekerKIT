@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
 """個人適応学習(#1)の学習データとヘッドの永続化。

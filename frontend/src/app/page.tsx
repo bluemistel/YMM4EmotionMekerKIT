@@ -1,4 +1,5 @@
 "use client";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useState, useEffect } from "react";
 import { api, AnalysisItem, PlacementItem, ProjectInfo, VoiceInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";

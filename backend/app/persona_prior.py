@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
 """キャラ性格マップ(#4) — 感情価×覚醒度の事前分布。

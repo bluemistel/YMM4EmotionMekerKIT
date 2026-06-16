@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const path = require("path");
 const http = require("http");

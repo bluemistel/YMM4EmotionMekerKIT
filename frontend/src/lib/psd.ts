@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 import { PsdLayerNode } from "./api";
 
 /** プリセット基準集合にデルタ（レイヤーID→表示/非表示）を重ねた可視集合を返す。 */
