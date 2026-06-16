@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """PyInstaller spec — FastAPI バックエンドを単体実行ファイル(onedir)に同梱する。
 
 Python 未導入のユーザーでも動くよう、torch/transformers/fugashi(unidic) 等の

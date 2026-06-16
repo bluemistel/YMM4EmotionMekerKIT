@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 let resolvedApiBase: string | null = null;
 
 async function initApiBase(): Promise<string> {
@@ -40,12 +41,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+export interface SceneInfo {
+  index: number;
+  name: string;
+  voice_count: number;
+  max_frame: number;
+  video_info: Record<string, number>;
+}
+
 export interface ProjectInfo {
   path: string;
   characters: { name: string; tachie_directory: string | null; voice_layer: number | null; color: string | null; tachie_type?: string; psd_path?: string | null }[];
   voice_count: number;
   video_info: Record<string, number>;
   timeline_count: number;
+  /** 各シーン（タイムライン）の概要。複数シーン対応のタブ生成・縮尺に使う。 */
+  timelines?: SceneInfo[];
 }
 
 export interface VoiceInfo {
@@ -137,6 +148,7 @@ export interface AnalysisItem {
   decay?: DecayInfo | null;
   resolution?: ResolutionInfo | null;
   guide?: GuideInfo | null;
+  timeline_index?: number;
 }
 
 export interface DialogueGroupInfo {
@@ -391,8 +403,9 @@ export const api = {
     );
   },
 
-  getAnalysisResult() {
-    return request<{ results: Record<string, AnalysisItem>; disabled_emotions?: string[] }>("/api/analyze/result");
+  getAnalysisResult(timelineIndex?: number) {
+    const qs = timelineIndex != null ? `?timeline_index=${timelineIndex}` : "";
+    return request<{ results: Record<string, AnalysisItem>; disabled_emotions?: string[] }>(`/api/analyze/result${qs}`);
   },
 
   previewExecution(timelineIndex = 0) {
@@ -544,7 +557,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.7";
+export const APP_VERSION_FALLBACK = "1.0.8";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

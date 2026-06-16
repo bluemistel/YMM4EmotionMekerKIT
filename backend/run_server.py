@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """PyInstaller 用バックエンド起動エントリ。
 
 `python -m uvicorn` はバンドル後に使えないため、uvicorn をプログラム的に起動する。

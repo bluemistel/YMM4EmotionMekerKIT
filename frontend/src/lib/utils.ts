@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 export function frameToTime(frame: number, fps: number): string {
   if (fps <= 0) return `F${frame}`;
   const totalSeconds = frame / fps;

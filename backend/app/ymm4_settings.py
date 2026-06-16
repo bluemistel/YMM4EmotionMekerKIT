@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Read YMM4's CharacterSettings.json to obtain the real default 立ち絵
 (standing-art) state for a character.
 

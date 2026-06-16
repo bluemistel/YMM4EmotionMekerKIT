@@ -1,4 +1,5 @@
 "use client";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 import PresetHoverButton from "./PresetHoverButton";
 import { useOverrideEditor, EMOTION_LABELS, EMOTION_KEYS, RANK_MARK } from "./OverrideEditorContext";

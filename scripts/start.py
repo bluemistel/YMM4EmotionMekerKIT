@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 """Start both backend (FastAPI) and frontend (Next.js) servers."""
 import subprocess
 import sys

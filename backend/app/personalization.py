@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
 from __future__ import annotations
 
 """個人適応学習(#1) — 凍結 BERT 埋め込み上の軽量ヘッド。

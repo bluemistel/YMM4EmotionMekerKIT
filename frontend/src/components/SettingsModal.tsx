@@ -1,4 +1,5 @@
 "use client";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useEffect, useState } from "react";
 import { api, getAppVersion, openExternalUrl, pickExePath, checkLatestVersion, compareSemver, LatestVersionInfo } from "@/lib/api";
@@ -37,7 +38,7 @@ const DETECTABLE_EMOTIONS: { key: string; label: string }[] = [
 // OFF にすると 怒/驚/哀 への補助寄与も失われるラベル（事前警告対象）。
 const SPILLOVER_EMOTIONS = new Set(["disgust", "fear"]);
 
-type Section = "general" | "analysis" | "lexicon" | "about";
+type Section = "general" | "analysis" | "lexicon" | "license" | "bugreport" | "about";
 
 const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
   {
@@ -73,6 +74,27 @@ const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    key: "license",
+    label: "ライセンス",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M12 3l8 4v5c0 4.5-3 7.5-8 9-5-1.5-8-4.5-8-9V7l8-4z" />
+        <path d="M9 12l2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    key: "bugreport",
+    label: "バグ報告",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="15.5" x2="12.01" y2="15.5" />
+      </svg>
+    ),
+  },
+  {
     key: "about",
     label: "バージョン情報",
     icon: (
@@ -89,8 +111,44 @@ const SECTION_TITLE: Record<Section, string> = {
   general: "全般",
   analysis: "感情分析",
   lexicon: "感情辞書",
+  license: "ライセンス",
+  bugreport: "バグ報告",
   about: "バージョン情報",
 };
+
+// アプリ内ライセンス表記。本体は AGPL-3.0、第三者・モデル/データセットは各ライセンス。
+const LICENSE_REPO_URL = "https://github.com/bluemistel/YMM4EmotionMekerKIT/blob/master/LICENSE";
+const LICENSE_GROUPS: { title: string; items: { name: string; lic: string; note?: string }[] }[] = [
+  {
+    title: "感情分析モデル / データセット",
+    items: [
+      { name: "patrickramos/bert-base-japanese-v2-wrime-fine-tune", lic: "CC BY-SA 3.0", note: "実行時にダウンロード・本体未同梱" },
+      { name: "WRIME（学習元データセット）", lic: "CC BY-NC-ND 4.0", note: "非営利・改変不可" },
+      { name: "cl-tohoku/bert-base-japanese-v2（基盤モデル）", lic: "CC BY-SA 3.0" },
+    ],
+  },
+  {
+    title: "ライブラリ（バックエンド）",
+    items: [
+      { name: "PyTorch", lic: "BSD-3-Clause" },
+      { name: "Transformers / Tokenizers / safetensors / huggingface_hub", lic: "Apache-2.0" },
+      { name: "FastAPI / Pydantic / PyYAML / psd-tools / fugashi", lic: "MIT" },
+      { name: "Starlette / Uvicorn / unidic-lite", lic: "BSD-3-Clause" },
+      { name: "Anthropic SDK / OpenAI SDK（LLM分析時のみ）", lic: "MIT / Apache-2.0" },
+    ],
+  },
+  {
+    title: "フロントエンド / デスクトップ",
+    items: [
+      { name: "Next.js / React / Electron / Tailwind CSS", lic: "MIT" },
+      { name: "TypeScript", lic: "Apache-2.0" },
+    ],
+  },
+  {
+    title: "フォント",
+    items: [{ name: "Zen Kaku Gothic New / JetBrains Mono", lic: "SIL OFL 1.1" }],
+  },
+];
 
 export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [open, setOpen] = useState(false);
@@ -658,6 +716,45 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
               {section === "lexicon" && <LexiconPanel />}
 
+              {section === "license" && (
+                <div>
+                  <h3 style={h3}>本ソフトウェアのライセンス</h3>
+                  <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.8, marginBottom: "6px" }}>
+                    YMM4 EmotionMaker KIT は <strong style={{ color: "var(--text-primary)" }}>GNU Affero General Public License v3.0 or later（AGPL-3.0-or-later）</strong> のもとで公開しています。
+                  </p>
+                  <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "10px" }}>
+                    v1.0.7 までは MIT License で公開していました（過去版はその版に限り MIT のままです）。
+                  </p>
+                  <button onClick={() => openExternalUrl(LICENSE_REPO_URL)} className="btn-secondary" style={{ fontSize: "0.78rem", padding: "6px 14px", marginBottom: "24px" }}>
+                    ライセンス全文を開く（GitHub） ↗
+                  </button>
+
+                  <h3 style={h3}>サードパーティ / 帰属表示</h3>
+                  <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "16px" }}>
+                    本ソフトウェアは以下のソフトウェア・モデル・データセットを利用しています。各コンポーネントはそれぞれのライセンスのもとで提供されます。
+                  </p>
+                  {LICENSE_GROUPS.map((g) => (
+                    <div key={g.title} style={{ marginBottom: "18px" }}>
+                      <span className="label-text" style={{ display: "block", marginBottom: "8px", color: "var(--accent)", fontWeight: 700 }}>{g.title}</span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "7px" }}>
+                        {g.items.map((it) => (
+                          <div key={it.name} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "14px", borderBottom: "1px solid var(--border-dim)", paddingBottom: "6px" }}>
+                            <span style={{ fontSize: "0.78rem", color: "var(--text-secondary)" }}>
+                              {it.name}
+                              {it.note && <span style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginLeft: "6px" }}>（{it.note}）</span>}
+                            </span>
+                            <span className="mono-text" style={{ fontSize: "0.72rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{it.lic}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-faint)", marginTop: "10px", lineHeight: 1.7 }}>
+                    各ライセンスの全文は、配布物に同梱の THIRD-PARTY-LICENSES および各配布元をご確認ください。記載のない推移的依存も、それぞれのライセンス（多くは MIT / BSD / Apache-2.0）のもとで提供されます。
+                  </p>
+                </div>
+              )}
+
               {section === "about" && (
                 <div>
                   <h3 style={h3}>バージョン情報</h3>
@@ -719,6 +816,11 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.8</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>ライセンス内容の変更</strong>：本ソフトウェアのライセンスを MIT から <strong style={{ color: "var(--text-secondary)" }}>AGPL-3.0-or-later</strong> に変更（v1.0.7 までの版は MIT のまま）。設定に「ライセンス」項目を追加し、本体・サードパーティ・感情分析モデル／データセットの帰属を明記</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>YMM4 のシーン機能ごとの感情分析に対応</strong>：複数シーンに分かれたプロジェクトをタブで切り替え、シーンごとに感情分析・表情配置が可能に。書き出しは解析済みの全シーンを一括で反映</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.7</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>パーツ個別変更をプリセットとして保存</strong>：「パーツ個別変更」で調整した状態に名前を付けて、YMM4 立ち絵プリセット（動く立ち絵の preset.ini／PSDの -ymm.json）の末尾へ追加登録。登録後はファイルを再読み込みしてアプリに即反映（YMM4 はプリセット一覧を起動中に保持するため、YMM4 を終了した状態での登録を推奨）</li>
@@ -757,10 +859,14 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個別設定</strong>：感情ラベルの手動上書き（感情で指定・強度・パーツ個別変更）を追加</li>
                     </ul>
                   </div>
+                </div>
+              )}
 
-                  <h3 style={h3}>バグ報告</h3>
-                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
-                    不具合や要望は共通フォームからお寄せください。
+              {section === "bugreport" && (
+                <div>
+                  <h3 style={h3}>バグ報告・ご要望</h3>
+                  <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.8, marginBottom: "12px" }}>
+                    不具合のご報告や機能のご要望は、共通フォームからお寄せください。いただいた内容は今後の改善の参考にさせていただきます。
                   </p>
                   <button onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)} className="btn-secondary" style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
                     バグ報告フォームを開く ↗

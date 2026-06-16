@@ -1,4 +1,5 @@
 "use client";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, VoiceInfo, TrainingRebuildResult } from "@/lib/api";

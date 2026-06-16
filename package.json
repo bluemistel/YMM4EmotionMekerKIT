@@ -1,9 +1,9 @@
 {
   "name": "ymm4-emotion-maker-kit",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "YMM4 表情アイテム自動配置ツール",
   "author": "blazwel <blazwel@gmail.com>",
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "main": "electron/main.js",
   "private": true,
   "scripts": {

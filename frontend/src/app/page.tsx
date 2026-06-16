@@ -1,4 +1,5 @@
 "use client";
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 import { useState, useEffect } from "react";
 import { api, AnalysisItem, PlacementItem, ProjectInfo, VoiceInfo, pickWorkstateSavePath, pickWorkstateOpenPath } from "@/lib/api";
@@ -11,6 +12,7 @@ import MappingPanel from "@/components/MappingPanel";
 import DialogueList from "@/components/DialogueList";
 import EmotionGuide from "@/components/EmotionGuide";
 import TimelinePreview from "@/components/TimelinePreview";
+import SceneTabBar from "@/components/SceneTabBar";
 import ExecuteModal from "@/components/ExecuteModal";
 import PreviewPartsPanel from "@/components/PreviewPartsPanel";
 import AnalysisOptimizerModal, { OptimizerInitial } from "@/components/AnalysisOptimizerModal";
@@ -43,8 +45,11 @@ export default function Home() {
   const [trainingProjectName, setTrainingProjectName] = useState("");
   const [configs, setConfigs] = useState<Record<string, CharacterConfig>>({});
   const [selectedCharacter, setSelectedCharacter] = useState<string | null>(null);
-  const [analysisResults, setAnalysisResults] = useState<Record<string, AnalysisItem> | null>(null);
-  const [placements, setPlacements] = useState<PlacementItem[] | null>(null);
+  // 複数シーン対応: シーン(timeline_index)ごとに分析結果・配置をキャッシュする。
+  const [analysisByScene, setAnalysisByScene] = useState<Record<number, Record<string, AnalysisItem> | null>>({});
+  const [placementsByScene, setPlacementsByScene] = useState<Record<number, PlacementItem[] | null>>({});
+  const [currentTimelineIndex, setCurrentTimelineIndex] = useState(0);
+  const [analyzingScene, setAnalyzingScene] = useState<number | null>(null);
   const [selectedVoiceIndex, setSelectedVoiceIndex] = useState<number | null>(null);
   const [mappingTab, setMappingTab] = useState<"mapping" | "override">("mapping");
   const [flowPhase, setFlowPhase] = useState<FlowPhase>("idle");
@@ -62,6 +67,22 @@ export default function Home() {
   const [showOptimizer, setShowOptimizer] = useState(true);
   const [optimizerOpen, setOptimizerOpen] = useState(false);
   const [optimizerInitial, setOptimizerInitial] = useState<OptimizerInitial>({ kakeai: true, readerWeight: 0.2, postprocess: false, contextGapSeconds: 0.4 });
+
+  // タブ表示はボイスを含むシーンのみ。表示用の分析結果・配置は現在シーンのスライス。
+  const scenes = (project?.timelines || []).filter((s) => s.voice_count > 0);
+  const currentScene = project?.timelines?.find((s) => s.index === currentTimelineIndex) ?? null;
+  const analysisResults = analysisByScene[currentTimelineIndex] ?? null;
+  const placements = placementsByScene[currentTimelineIndex] ?? null;
+  const hasAnyAnalysis = Object.values(analysisByScene).some(
+    (a) => a != null && Object.keys(a).length > 0
+  );
+
+  function setSceneAnalysis(tl: number, results: Record<string, AnalysisItem> | null) {
+    setAnalysisByScene((prev) => ({ ...prev, [tl]: results }));
+  }
+  function setScenePlacements(tl: number, pl: PlacementItem[] | null) {
+    setPlacementsByScene((prev) => ({ ...prev, [tl]: pl }));
+  }
 
   useEffect(() => {
     api.init();
@@ -93,7 +114,7 @@ export default function Home() {
     return () => window.removeEventListener("ymm4-settings-changed", onChange);
   }, []);
 
-  const fps = project?.video_info?.FPS || 30;
+  const fps = currentScene?.video_info?.FPS || project?.video_info?.FPS || 30;
 
   function handleSettingsLoaded(settings: Record<string, unknown>) {
     setPostProcessSettings({
@@ -178,16 +199,19 @@ export default function Home() {
   }
 
   // 分析本体（読込・検出後に実行）。ウィザードの開始/スキップからも呼ぶ。
-  async function runAnalysis() {
+  // 指定シーンを感情分析してキャッシュへ格納する（グループ検出→分析→プレビュー）。
+  async function runAnalysisFor(tl: number) {
+    setAnalyzingScene(tl);
     setFlowPhase("analyzing");
     setFlowMessage("感情分析を実行しています…（初回はモデルのダウンロードで数分かかる場合があります）");
     try {
-      const res = await api.analyze();
-      setAnalysisResults(res.results);
+      await api.detectGroups(tl, 1).catch(() => {});
+      const res = await api.analyze(tl);
+      setSceneAnalysis(tl, res.results);
       if (res.disabled_emotions) setDisabledEmotions(res.disabled_emotions);
       try {
-        const preview = await api.previewExecution();
-        setPlacements(preview.placements);
+        const preview = await api.previewExecution(tl);
+        setScenePlacements(tl, preview.placements);
       } catch {
         // preview may fail if some characters are unconfigured
       }
@@ -196,6 +220,19 @@ export default function Home() {
     } catch (e) {
       setFlowPhase("error");
       setFlowMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAnalyzingScene(null);
+    }
+  }
+
+  // シーンタブ切替: 未分析シーンは自動で分析、分析済みは即時表示（キャッシュ）。
+  function selectScene(tl: number) {
+    if (tl === currentTimelineIndex) return;
+    setCurrentTimelineIndex(tl);
+    setSelectedVoiceIndex(null);
+    setMappingTab("mapping");
+    if (analysisByScene[tl] == null) {
+      void runAnalysisFor(tl);
     }
   }
 
@@ -206,22 +243,22 @@ export default function Home() {
       const info = await api.loadProject(path);
       setProject(info);
       setSelectedCharacter(null);
-      setAnalysisResults(null);
-      setPlacements(null);
+      setAnalysisByScene({});
+      setPlacementsByScene({});
+      setCurrentTimelineIndex(0);
       setSelectedVoiceIndex(null);
       setMappingTab("mapping");
 
       setFlowPhase("detecting");
       setFlowMessage("キャラクター・プリセットを検出しています…");
       await detectCharacters();
-      await api.detectGroups(0, 1).catch(() => {});
 
-      // 自動最適化ウィザードを挟む（無効なら即分析）。
+      // 読み込み時はメイン（シーン0）のみ自動分析。他シーンはタブ切替で遅延分析。
       if (showOptimizer) {
         setFlowMessage("");
         setOptimizerOpen(true);
       } else {
-        await runAnalysis();
+        await runAnalysisFor(0);
       }
     } catch (e) {
       setFlowPhase("error");
@@ -257,12 +294,12 @@ export default function Home() {
     } catch {
       // non-fatal
     }
-    await runAnalysis();
+    await runAnalysisFor(0);
   }
 
   function handleOptimizerSkip() {
     setOptimizerOpen(false);
-    void runAnalysis();
+    void runAnalysisFor(0);
   }
 
   // --- 作業状態 (work-state) 保存 / 復元 ---
@@ -292,16 +329,25 @@ export default function Home() {
       await detectCharacters(true);
 
       // Restore the previously-computed analysis without re-running the model.
+      setAnalysisByScene({});
+      setPlacementsByScene({});
+      setCurrentTimelineIndex(0);
       try {
         const r = await api.getAnalysisResult();
-        setAnalysisResults(r.results);
+        // 保存済み分析をシーン(timeline_index)ごとに振り分けてキャッシュへ復元。
+        const byScene: Record<number, Record<string, AnalysisItem>> = {};
+        for (const [k, item] of Object.entries(r.results || {})) {
+          const t = (item as AnalysisItem).timeline_index ?? 0;
+          (byScene[t] ??= {})[k] = item as AnalysisItem;
+        }
+        setAnalysisByScene(byScene);
         if (r.disabled_emotions) setDisabledEmotions(r.disabled_emotions);
       } catch {
-        setAnalysisResults(null);
+        // ignore
       }
       try {
-        const preview = await api.previewExecution();
-        setPlacements(preview.placements);
+        const preview = await api.previewExecution(0);
+        setScenePlacements(0, preview.placements);
       } catch {
         // ignore
       }
@@ -323,8 +369,10 @@ export default function Home() {
     setProject(null);
     setConfigs({});
     setSelectedCharacter(null);
-    setAnalysisResults(null);
-    setPlacements(null);
+    setAnalysisByScene({});
+    setPlacementsByScene({});
+    setCurrentTimelineIndex(0);
+    setAnalyzingScene(null);
     setSelectedVoiceIndex(null);
     setMappingTab("mapping");
     setFlowPhase("idle");
@@ -335,15 +383,16 @@ export default function Home() {
   // recomputes `resolution` from the current config/overrides, so mapping
   // edits and per-line overrides reflect immediately.
   async function refreshResolution() {
+    const tl = currentTimelineIndex;
     try {
-      const preview = await api.previewExecution();
-      setPlacements(preview.placements);
+      const preview = await api.previewExecution(tl);
+      setScenePlacements(tl, preview.placements);
     } catch {
       // ignore
     }
     try {
-      const r = await api.getAnalysisResult();
-      setAnalysisResults(r.results);
+      const r = await api.getAnalysisResult(tl);
+      setSceneAnalysis(tl, r.results);
       if (r.disabled_emotions) setDisabledEmotions(r.disabled_emotions);
     } catch {
       // ignore
@@ -366,28 +415,11 @@ export default function Home() {
   }
 
   async function handleReanalyze() {
-    setFlowPhase("analyzing");
-    setFlowMessage("再分析しています…");
-    try {
-      await api.detectGroups(0, 1).catch(() => {});
-      const res = await api.analyze();
-      setAnalysisResults(res.results);
-      if (res.disabled_emotions) setDisabledEmotions(res.disabled_emotions);
-      try {
-        const preview = await api.previewExecution();
-        setPlacements(preview.placements);
-      } catch {
-        // ignore
-      }
-      setFlowPhase("done");
-      setFlowMessage("");
-    } catch (e) {
-      setFlowPhase("error");
-      setFlowMessage(e instanceof Error ? e.message : String(e));
-    }
+    // 現在のシーンを再分析（当該シーンのキャッシュのみ更新）。
+    await runAnalysisFor(currentTimelineIndex);
   }
 
-  const totalFrames = project?.video_info?.Length || 0;
+  const totalFrames = currentScene?.video_info?.Length || currentScene?.max_frame || project?.video_info?.Length || 0;
 
   const characterColors: Record<string, string> = {};
   if (project) {
@@ -510,6 +542,12 @@ export default function Home() {
 
               {/* カラム3: 感情分析結果 + タイムライン */}
               <div className="col-span-6 overflow-y-auto pr-1 flex flex-col gap-4">
+                <SceneTabBar
+                  scenes={scenes}
+                  current={currentTimelineIndex}
+                  analyzing={analyzingScene}
+                  onSelect={selectScene}
+                />
                 <DialogueList
                   analysisResults={analysisResults}
                   fps={fps}
@@ -537,7 +575,7 @@ export default function Home() {
 
             <ExecuteModal
               projectPath={project.path}
-              hasAnalysis={analysisResults !== null && Object.keys(analysisResults).length > 0}
+              hasAnalysis={hasAnyAnalysis}
             />
 
             <AnalysisOptimizerModal

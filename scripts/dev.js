@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
 /**
  * 開発用ランチャ: Next.js 開発サーバー(:3000) を起動し、応答を確認してから
  * Electron を起動する。Electron 側はバックエンド(FastAPI) を自前で起動するため、
