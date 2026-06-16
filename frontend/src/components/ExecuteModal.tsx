@@ -28,7 +28,7 @@ export default function ExecuteModal({ projectPath, hasAnalysis }: Props) {
   const [outputPath, setOutputPath] = useState(defaultOutput);
   const [backup, setBackup] = useState(true);
   const [executing, setExecuting] = useState(false);
-  const [result, setResult] = useState<{ status: string; output_path: string; face_items_count: number } | null>(null);
+  const [result, setResult] = useState<{ status: string; output_path: string; face_items_count: number; scene_count?: number } | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -110,6 +110,10 @@ export default function ExecuteModal({ projectPath, hasAnalysis }: Props) {
             <span style={{ color: "var(--text-secondary)" }}>バックアップを作成 (.ymmp.bak)</span>
           </label>
 
+          <p style={{ fontSize: "0.72rem", color: "var(--text-faint)" }}>
+            複数シーンのプロジェクトでは、<span style={{ color: "var(--text-muted)" }}>解析済みの全シーン</span>をまとめて1ファイルに書き出します（未分析のシーンは対象外です）。
+          </p>
+
           <button
             onClick={handleExecute}
             disabled={executing || !hasAnalysis}
@@ -139,6 +143,9 @@ export default function ExecuteModal({ projectPath, hasAnalysis }: Props) {
               <p className="mono-text" style={{ color: "var(--text-secondary)", marginTop: "6px", fontSize: "0.8rem" }}>{result.output_path}</p>
               <p style={{ color: "var(--text-secondary)", marginTop: "2px" }}>
                 生成: <span className="mono-text" style={{ color: "var(--accent)", fontWeight: 700 }}>{result.face_items_count}</span> 件
+                {result.scene_count != null && result.scene_count > 1 && (
+                  <span> / <span className="mono-text" style={{ color: "var(--accent)", fontWeight: 700 }}>{result.scene_count}</span> シーン</span>
+                )}
               </p>
             </div>
           )}

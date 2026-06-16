@@ -23,6 +23,8 @@ class VoiceItem:
     layer: int
     index: int
     raw: dict = field(repr=False)
+    # このボイスが属するシーン（タイムライン）の index。複数シーン対応で使用。
+    timeline: int = 0
 
 
 @dataclass
@@ -67,8 +69,17 @@ class YmmpProject:
             raise IndexError(f"Timeline index {timeline_index} out of range")
         return self.timelines[timeline_index].get("Items", [])
 
+    def _voice_index_base(self, timeline_index: int) -> int:
+        """指定シーンのボイス index に加算する、全シーン一意化用オフセット。
+
+        先行する全シーンの Items 総数を基準にするため、シーンを跨いでも
+        index が衝突しない（analysis_results / overrides の単一キーで運用可能）。
+        """
+        return sum(len(self.get_items(t)) for t in range(timeline_index))
+
     def get_voice_items(self, timeline_index: int = 0) -> list[VoiceItem]:
         items = self.get_items(timeline_index)
+        base = self._voice_index_base(timeline_index)
         voices = []
         for i, item in enumerate(items):
             if item.get("$type") == VOICE_ITEM_TYPE:
@@ -81,11 +92,40 @@ class YmmpProject:
                     frame=item["Frame"],
                     length=item["Length"],
                     layer=item["Layer"],
-                    index=i,
+                    # 全シーン一意の index（base + シーン内位置）。
+                    index=base + i,
                     raw=item,
+                    timeline=timeline_index,
                 ))
         voices.sort(key=lambda v: v.frame)
         return voices
+
+    def get_timeline_summaries(self) -> list[dict]:
+        """各シーン（タイムライン）の概要を返す。タブ生成・シーン別縮尺に使う。
+
+        戻り値: [{ "index", "name", "voice_count", "video_info" }, ...]
+        """
+        summaries: list[dict] = []
+        for t, tl in enumerate(self.timelines):
+            name = tl.get("Name") or f"シーン{t + 1}"
+            items = tl.get("Items", [])
+            voice_count = sum(1 for it in items if it.get("$type") == VOICE_ITEM_TYPE)
+            # シーンの終端フレーム（全アイテムの Frame+Length の最大）。VideoInfo に
+            # Length が無いプロジェクトでも、タイムラインの縮尺をシーン別に正しく取れる。
+            max_frame = 0
+            for it in items:
+                f = it.get("Frame")
+                ln = it.get("Length")
+                if isinstance(f, int) and isinstance(ln, int):
+                    max_frame = max(max_frame, f + ln)
+            summaries.append({
+                "index": t,
+                "name": name,
+                "voice_count": voice_count,
+                "max_frame": max_frame,
+                "video_info": self.get_video_info(t),
+            })
+        return summaries
 
     def get_tachie_intervals(self, timeline_index: int = 0) -> dict[str, list[tuple[int, int]]]:
         """キャラ名 -> 立ち絵(TachieItem)の存在区間 [start, end) のマージ済みリスト。

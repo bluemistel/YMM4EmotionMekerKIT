@@ -239,6 +239,7 @@ def _project_info_dict(project: YmmpProject, timeline_index: int = 0) -> dict:
         "voice_count": len(voices),
         "video_info": video_info,
         "timeline_count": len(project.timelines),
+        "timelines": project.get_timeline_summaries(),
     }
 
 
@@ -1225,6 +1226,7 @@ def analyze_emotions(req: AnalyzeRequest):
                 "raw_emotion": post.raw.to_dict(),
                 "gradient": {"values": post.gradient, "type": post.gradient_type},
                 "decay": {"residual": post.decay_residual},
+                "timeline_index": req.timeline_index,
             }
         else:
             analysis[voice.index] = {
@@ -1238,10 +1240,19 @@ def analyze_emotions(req: AnalyzeRequest):
                 "raw_emotion": None,
                 "gradient": None,
                 "decay": None,
+                "timeline_index": req.timeline_index,
             }
 
     _resolve_for_analysis(config, analysis, _state.get("overrides", {}))
-    _state["analysis_results"] = analysis
+    # 複数シーン併存: 既存 analysis から当該シーン分のみ除去して当シーンの結果で更新
+    # （voice index は全シーン一意なので衝突しない。再分析は当該シーンのみ置換）。
+    merged = {
+        k: v
+        for k, v in _state.get("analysis_results", {}).items()
+        if v.get("timeline_index") != req.timeline_index
+    }
+    merged.update(analysis)
+    _state["analysis_results"] = merged
     return {
         "count": len(analysis),
         "results": analysis,
@@ -1250,11 +1261,16 @@ def analyze_emotions(req: AnalyzeRequest):
 
 
 @app.get("/api/analyze/result")
-def get_analysis_result():
+def get_analysis_result(timeline_index: int | None = None):
     analysis = _state.get("analysis_results", {})
     config: ProjectConfig | None = _state["config"]
     if analysis and config is not None:
         _resolve_for_analysis(config, analysis, _state.get("overrides", {}))
+    # シーン指定があれば当該シーンの項目のみ返す（複数シーン併存時のスコープ用）。
+    if timeline_index is not None:
+        analysis = {
+            k: v for k, v in analysis.items() if v.get("timeline_index") == timeline_index
+        }
     return {
         "results": analysis,
         "disabled_emotions": list(config.settings.disabled_emotions or []) if config else [],
@@ -1305,41 +1321,50 @@ def execute(req: ExecuteRequest):
     if not analysis:
         raise HTTPException(400, "No analysis results. Run /api/analyze first.")
 
-    all_placements = _compute_all_placements(project, config, analysis, req.timeline_index)
+    # 解析済みの全シーンを対象にする（複数シーン対応）。各 analysis item の
+    # timeline_index から集合を作り、昇順に書き出す（タグが無い旧データは 0 扱い）。
+    scene_indices = sorted({int(v.get("timeline_index", 0)) for v in analysis.values()})
 
-    face_items = []
-    for p in all_placements:
-        char_config = config.characters.get(p.character_name, CharacterConfig())
-        layer = p.voice_layer + char_config.layer_offset
-        if isinstance(p.parts, dict) and "__psd_layers__" in p.parts:
-            # PSD立ち絵: PsdTachieFaceParameter（EnableLayers）で書き出す。
-            item = build_psd_face_item(
-                character_name=p.character_name,
-                frame=p.frame,
-                length=p.length,
-                layer=layer,
-                psd_path=char_config.psd_path,
-                enable_layers=p.parts["__psd_layers__"],
-                eye_animation=p.parts.get("EyeAnimation", "Default"),
-                mouth_animation=p.parts.get("MouthAnimation", "Default"),
-                remark=f"[Auto] {p.preset_name}",
-            )
-        else:
-            item = build_tachie_face_item(
-                character_name=p.character_name,
-                frame=p.frame,
-                length=p.length,
-                layer=layer,
-                parts=p.parts,
-                remark=f"[Auto] {p.preset_name}",
-            )
-        face_items.append(item)
+    total_face_items = 0
+    for tl in scene_indices:
+        all_placements = _compute_all_placements(project, config, analysis, tl)
+        if not all_placements:
+            continue
 
-    # 重複適用を防ぐため、書き出すキャラの既存表情アイテムを除去してから挿入する
-    # （YMM4 は同区間で最下部の1つしか適用しないため、古い手動/前回分が残ると誤適用になる）。
-    target_chars = {p.character_name for p in all_placements}
-    project.remove_face_items(target_chars, req.timeline_index)
-    project.insert_face_items(face_items, req.timeline_index)
+        face_items = []
+        for p in all_placements:
+            char_config = config.characters.get(p.character_name, CharacterConfig())
+            layer = p.voice_layer + char_config.layer_offset
+            if isinstance(p.parts, dict) and "__psd_layers__" in p.parts:
+                # PSD立ち絵: PsdTachieFaceParameter（EnableLayers）で書き出す。
+                item = build_psd_face_item(
+                    character_name=p.character_name,
+                    frame=p.frame,
+                    length=p.length,
+                    layer=layer,
+                    psd_path=char_config.psd_path,
+                    enable_layers=p.parts["__psd_layers__"],
+                    eye_animation=p.parts.get("EyeAnimation", "Default"),
+                    mouth_animation=p.parts.get("MouthAnimation", "Default"),
+                    remark=f"[Auto] {p.preset_name}",
+                )
+            else:
+                item = build_tachie_face_item(
+                    character_name=p.character_name,
+                    frame=p.frame,
+                    length=p.length,
+                    layer=layer,
+                    parts=p.parts,
+                    remark=f"[Auto] {p.preset_name}",
+                )
+            face_items.append(item)
+
+        # 重複適用を防ぐため、書き出すキャラの既存表情アイテムを除去してから挿入する
+        # （YMM4 は同区間で最下部の1つしか適用しないため、古い手動/前回分が残ると誤適用になる）。
+        target_chars = {p.character_name for p in all_placements}
+        project.remove_face_items(target_chars, tl)
+        project.insert_face_items(face_items, tl)
+        total_face_items += len(face_items)
 
     output_path = req.output_path
     if output_path is None or not str(output_path).strip():
@@ -1356,7 +1381,8 @@ def execute(req: ExecuteRequest):
     return {
         "status": "success",
         "output_path": str(saved),
-        "face_items_count": len(face_items),
+        "face_items_count": total_face_items,
+        "scene_count": len(scene_indices),
     }
 
 

@@ -38,7 +38,7 @@ const DETECTABLE_EMOTIONS: { key: string; label: string }[] = [
 // OFF にすると 怒/驚/哀 への補助寄与も失われるラベル（事前警告対象）。
 const SPILLOVER_EMOTIONS = new Set(["disgust", "fear"]);
 
-type Section = "general" | "analysis" | "lexicon" | "license" | "about";
+type Section = "general" | "analysis" | "lexicon" | "license" | "bugreport" | "about";
 
 const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
   {
@@ -84,6 +84,17 @@ const NAV: { key: Section; label: string; icon: React.ReactNode }[] = [
     ),
   },
   {
+    key: "bugreport",
+    label: "バグ報告",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+        <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+        <line x1="12" y1="8" x2="12" y2="12" />
+        <line x1="12" y1="15.5" x2="12.01" y2="15.5" />
+      </svg>
+    ),
+  },
+  {
     key: "about",
     label: "バージョン情報",
     icon: (
@@ -101,6 +112,7 @@ const SECTION_TITLE: Record<Section, string> = {
   analysis: "感情分析",
   lexicon: "感情辞書",
   license: "ライセンス",
+  bugreport: "バグ報告",
   about: "バージョン情報",
 };
 
@@ -806,8 +818,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.8</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
-                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>ライセンスを変更</strong>：本ソフトウェアのライセンスを MIT から <strong style={{ color: "var(--text-secondary)" }}>AGPL-3.0-or-later</strong> に変更しました（v1.0.7 までの版は MIT のままです）</li>
-                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>ライセンス表記を追加</strong>：設定に「ライセンス」項目を追加し、本体・サードパーティ・感情分析モデル／データセットの帰属を明記</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>ライセンス内容の変更</strong>：本ソフトウェアのライセンスを MIT から <strong style={{ color: "var(--text-secondary)" }}>AGPL-3.0-or-later</strong> に変更（v1.0.7 までの版は MIT のまま）。設定に「ライセンス」項目を追加し、本体・サードパーティ・感情分析モデル／データセットの帰属を明記</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>YMM4 のシーン機能ごとの感情分析に対応</strong>：複数シーンに分かれたプロジェクトをタブで切り替え、シーンごとに感情分析・表情配置が可能に。書き出しは解析済みの全シーンを一括で反映</li>
                     </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.7</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
@@ -847,10 +859,14 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>個別設定</strong>：感情ラベルの手動上書き（感情で指定・強度・パーツ個別変更）を追加</li>
                     </ul>
                   </div>
+                </div>
+              )}
 
-                  <h3 style={h3}>バグ報告</h3>
-                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "10px" }}>
-                    不具合や要望は共通フォームからお寄せください。
+              {section === "bugreport" && (
+                <div>
+                  <h3 style={h3}>バグ報告・ご要望</h3>
+                  <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", lineHeight: 1.8, marginBottom: "12px" }}>
+                    不具合のご報告や機能のご要望は、共通フォームからお寄せください。いただいた内容は今後の改善の参考にさせていただきます。
                   </p>
                   <button onClick={() => openExternalUrl(NOTION_BUG_REPORT_URL)} className="btn-secondary" style={{ fontSize: "0.8rem", padding: "6px 14px" }}>
                     バグ報告フォームを開く ↗
