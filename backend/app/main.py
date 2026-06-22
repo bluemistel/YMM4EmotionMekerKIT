@@ -1132,7 +1132,17 @@ def analyze_emotions(req: AnalyzeRequest):
 
     texts = [_target_text(v) for v in voices]
 
-    results = analyzer.analyze_batch(texts, contexts)
+    # 感情分析の失敗（LLM のキー未設定・ライブラリ未導入・API エラー等）は、
+    # 汎用 500 ではなく原因の分かるメッセージとして返す（フロントに表示される）。
+    try:
+        results = analyzer.analyze_batch(texts, contexts)
+    except HTTPException:
+        raise
+    except Exception as e:
+        # LLM 経路は失敗時にアナライザを破棄し、設定修正後に作り直せるようにする。
+        if model_type != "local":
+            _state["analyzer"] = None
+        raise HTTPException(status_code=502, detail=f"感情分析に失敗しました: {e}")
 
     # --- 感情スコアへの補正注入順（統合ポリシー） ---
     # raw(モデル出力)
@@ -1619,8 +1629,10 @@ def _resolve_for_analysis(config: ProjectConfig, analysis: dict, overrides: dict
 
 
 def _get_or_create_analyzer(model_type: str, settings: Settings):
+    # キャッシュは「同じ model_type のときだけ」再利用する。モデルを切り替えたら
+    # （local⇔LLM、Claude⇔OpenAI）必ず作り直す（設定変更を取りこぼさない保険）。
     current = _state.get("analyzer")
-    if current is not None:
+    if current is not None and _state.get("analyzer_model") == model_type:
         return current
 
     if model_type == "local":
@@ -1634,6 +1646,7 @@ def _get_or_create_analyzer(model_type: str, settings: Settings):
         raise HTTPException(400, f"Unknown model type: {model_type}")
 
     _state["analyzer"] = analyzer
+    _state["analyzer_model"] = model_type
     return analyzer
 
 

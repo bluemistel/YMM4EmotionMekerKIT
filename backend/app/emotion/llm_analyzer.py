@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """\
 あなたは日本語テキストの感情分析エンジンです。
-与えられた台詞テキストから以下の6つの感情の強度を0.0～1.0のスコアで判定してください。
+与えられた台詞テキストから以下の9つの感情の強度を0.0～1.0のスコアで判定してください。
 
 - joy (喜): 嬉しさ、楽しさ、喜び
 - anger (怒): 怒り、苛立ち、不満
@@ -45,13 +45,33 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
 
     def _get_claude_client(self):
         if self._client is None:
-            import anthropic
+            if not self.api_key:
+                raise RuntimeError(
+                    "Claude の API キーが未設定です。設定 ＞ 感情分析 で API キーを入力してください。"
+                )
+            try:
+                import anthropic
+            except ImportError as e:
+                raise RuntimeError(
+                    "Claude 連携ライブラリ（anthropic）が見つかりません。LLM 感情分析を使うには "
+                    "`pip install anthropic` を実行してください。"
+                ) from e
             self._client = anthropic.Anthropic(api_key=self.api_key)
         return self._client
 
     def _get_openai_client(self):
         if self._client is None:
-            import openai
+            if not self.api_key:
+                raise RuntimeError(
+                    "OpenAI の API キーが未設定です。設定 ＞ 感情分析 で API キーを入力してください。"
+                )
+            try:
+                import openai
+            except ImportError as e:
+                raise RuntimeError(
+                    "OpenAI 連携ライブラリ（openai）が見つかりません。LLM 感情分析を使うには "
+                    "`pip install openai` を実行してください。"
+                ) from e
             self._client = openai.OpenAI(api_key=self.api_key)
         return self._client
 

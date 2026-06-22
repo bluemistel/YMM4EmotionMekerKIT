@@ -816,6 +816,10 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.9</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>不具合修正</strong>：感情分析にLLM感情分析を使用すると感情分析が行われない不具合の修正</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.8</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>ライセンス内容の変更</strong>：本ソフトウェアのライセンスを MIT から <strong style={{ color: "var(--text-secondary)" }}>AGPL-3.0-or-later</strong> に変更（v1.0.7 までの版は MIT のまま）。設定に「ライセンス」項目を追加し、本体・サードパーティ・感情分析モデル／データセットの帰属を明記</li>

@@ -30,6 +30,10 @@ for pkg in (
     "fastapi",
     "starlette",
     "pydantic",
+    # LLM 感情分析（任意機能）。同梱しないと配布版で Claude/OpenAI 分析が動かない。
+    "openai",
+    "anthropic",
+    "httpx",
 ):
     try:
         d, b, h = collect_all(pkg)
