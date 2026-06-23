@@ -1878,7 +1878,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
 
 # --- Version check (GitHub の公開タグと比較) ---
 
-GITHUB_TAGS_URL = "https://api.github.com/repos/Rumia-Channel/YMM4EmotionMekerKIT/tags"
+GITHUB_TAGS_URL = "https://api.github.com/repos/bluemistel/YMM4EmotionMekerKIT/tags"
 DOWNLOAD_URL = "https://bluemist.booth.pm/items/8466630"
 
 
