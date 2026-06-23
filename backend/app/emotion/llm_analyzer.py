@@ -145,13 +145,37 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
     # ------------------------------------------------------------------
     def _get_claude_client(self):
         if self._client is None:
-            import anthropic
+            if not self.api_key:
+                raise RuntimeError(
+                    "Claude の API キーが未設定です。設定 ＞ 感情分析 で API キーを入力してください。"
+                )
+            try:
+                import anthropic
+            except ImportError as e:
+                raise RuntimeError(
+                    "Claude 連携ライブラリ（anthropic）が見つかりません。"
+                    "LLM 感情分析を使うには `pip install anthropic` を実行するか、"
+                    "`backend/setup_venv.py` / `uv` / `pip` で .venv を再セットアップしてください。"
+                ) from e
             self._client = anthropic.Anthropic(api_key=self.api_key)
         return self._client
 
     def _get_openai_client(self, base_url: str | None = None):
         if self._client is None or getattr(self, "_client_base_url", None) != base_url:
-            import openai
+            is_deepseek = self.provider == "deepseek"
+            if not self.api_key:
+                service = "DeepSeek" if is_deepseek else "OpenAI"
+                raise RuntimeError(
+                    f"{service} の API キーが未設定です。設定 ＞ 感情分析 で API キーを入力してください。"
+                )
+            try:
+                import openai
+            except ImportError as e:
+                raise RuntimeError(
+                    "OpenAI / DeepSeek 連携ライブラリ（openai）が見つかりません。"
+                    "LLM 感情分析を使うには `pip install openai` を実行するか、"
+                    "`backend/setup_venv.py` / `uv` / `pip` で .venv を再セットアップしてください。"
+                ) from e
             self._client = openai.OpenAI(api_key=self.api_key, base_url=base_url)
             self._client_base_url = base_url
         return self._client

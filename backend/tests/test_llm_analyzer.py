@@ -259,5 +259,42 @@ class TestAnalyzeFallback(unittest.TestCase):
         self.assertAlmostEqual(result.happiness, 0.3)
 
 
+class TestMissingSetup(unittest.TestCase):
+    def test_claude_raises_without_api_key(self):
+        analyzer = LlmEmotionAnalyzer(provider="claude", api_key="")
+        with self.assertRaises(RuntimeError) as ctx:
+            analyzer._get_claude_client()
+        self.assertIn("Claude", str(ctx.exception))
+        self.assertIn("API キー", str(ctx.exception))
+
+    def test_claude_raises_without_anthropic_package(self):
+        analyzer = LlmEmotionAnalyzer(provider="claude", api_key="test-key")
+        with patch.dict(sys.modules, {"anthropic": None}, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                analyzer._get_claude_client()
+        self.assertIn("anthropic", str(ctx.exception))
+
+    def test_openai_raises_without_api_key(self):
+        analyzer = LlmEmotionAnalyzer(provider="openai", api_key="")
+        with self.assertRaises(RuntimeError) as ctx:
+            analyzer._get_openai_client()
+        self.assertIn("OpenAI", str(ctx.exception))
+        self.assertIn("API キー", str(ctx.exception))
+
+    def test_deepseek_raises_without_api_key(self):
+        analyzer = LlmEmotionAnalyzer(provider="deepseek", api_key="")
+        with self.assertRaises(RuntimeError) as ctx:
+            analyzer._get_openai_client(base_url="https://api.deepseek.com")
+        self.assertIn("DeepSeek", str(ctx.exception))
+        self.assertIn("API キー", str(ctx.exception))
+
+    def test_openai_raises_without_openai_package(self):
+        analyzer = LlmEmotionAnalyzer(provider="openai", api_key="test-key")
+        with patch.dict(sys.modules, {"openai": None}, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                analyzer._get_openai_client()
+        self.assertIn("openai", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
