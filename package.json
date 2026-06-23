@@ -11,7 +11,7 @@
     "dev:electron": "electron .",
     "dev:web": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend": "cd backend && .venv\\Scripts\\python build_backend.py",
+    "build:backend": "node scripts/build-backend.js",
     "build:electron": "electron-builder --win",
     "build": "npm run build:frontend && npm run build:backend && npm run build:electron",
     "postinstall": "cd frontend && npm install"
