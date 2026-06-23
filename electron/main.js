@@ -77,10 +77,7 @@ function startBackend(port) {
     } else {
       // 開発時は backend/.venv の Python で uvicorn を起動。
       const venvDir = getResourcePath("backend", ".venv");
-      command =
-        process.platform === "win32"
-          ? path.join(venvDir, "Scripts", "python.exe")
-          : path.join(venvDir, "bin", "python");
+      command = path.join(venvDir, process.platform === "win32" ? "Scripts" : "bin", "python");
       args = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)];
       cwd = getResourcePath("backend");
     }
