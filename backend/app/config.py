@@ -37,10 +37,13 @@ class CharacterConfig:
         return self.emotion_presets.get("default", "")
 
 
+DEFAULT_MODEL_PATH = "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+
+
 @dataclass
 class Settings:
     emotion_model: str = "local"
-    model_path: str = "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+    model_path: str = DEFAULT_MODEL_PATH
     emotion_threshold: float = 0.3
     context_window: int = 3
     # 分析時に対象台詞の直前に含める「ターン数」（話者分離つき文脈）。
@@ -100,7 +103,7 @@ def load_config(path: str | Path) -> ProjectConfig:
     settings_raw = raw.get("settings", {})
     settings = Settings(
         emotion_model=settings_raw.get("emotion_model", "local"),
-        model_path=settings_raw.get("model_path", "models/wrime-roberta"),
+        model_path=settings_raw.get("model_path", DEFAULT_MODEL_PATH),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
         context_turns=settings_raw.get("context_turns", 2),

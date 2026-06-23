@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .config import (
+    DEFAULT_MODEL_PATH,
     CharacterConfig,
     ProjectConfig,
     Settings,
@@ -824,6 +825,7 @@ def detect_dialogue_groups(req: DetectGroupsRequest):
     voices = project.get_voice_items(req.timeline_index)
     groups = detect_groups(voices, req.gap_threshold)
     _state["groups"] = groups
+    _state["groups_timeline_index"] = req.timeline_index
 
     return {
         "count": len(groups),
@@ -867,7 +869,8 @@ def merge_dialogue_groups(req: MergeGroupsRequest):
         raise HTTPException(400, "No project loaded")
 
     groups: list[DialogueGroup] = _state.get("groups", [])
-    voices = project.get_voice_items()
+    timeline_index = _state.get("groups_timeline_index", 0)
+    voices = project.get_voice_items(timeline_index)
     updated = merge_groups(groups, req.group_ids, voices)
     _state["groups"] = updated
 
@@ -881,7 +884,8 @@ def split_dialogue_group(req: SplitGroupRequest):
         raise HTTPException(400, "No project loaded")
 
     groups: list[DialogueGroup] = _state.get("groups", [])
-    voices = project.get_voice_items()
+    timeline_index = _state.get("groups_timeline_index", 0)
+    voices = project.get_voice_items(timeline_index)
     updated = split_group(groups, req.group_id, req.split_at_voice_index, voices)
     _state["groups"] = updated
 
@@ -949,7 +953,7 @@ def _get_embedding_analyzer():
         return cur
     from .emotion.bert_analyzer import BertEmotionAnalyzer
     config: ProjectConfig | None = _state["config"]
-    model_path = config.settings.model_path if config else "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+    model_path = config.settings.model_path if config else DEFAULT_MODEL_PATH
     analyzer = BertEmotionAnalyzer(model_path)
     # ローカルモードなら以後も再利用できるようキャッシュ。
     if config and config.settings.emotion_model == "local":
@@ -1087,6 +1091,7 @@ def load_workstate(req: WorkstateLoadRequest):
         except TypeError:
             continue
     _state["groups"] = groups
+    _state["groups_timeline_index"] = req.timeline_index
 
     info = _project_info_dict(project, req.timeline_index)
     info["has_analysis"] = bool(_state["analysis_results"])
@@ -1822,7 +1827,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
     settings_raw = data.get("settings", {})
     settings = Settings(
         emotion_model=settings_raw.get("emotion_model", "local"),
-        model_path=settings_raw.get("model_path", "models/wrime-roberta"),
+        model_path=settings_raw.get("model_path", DEFAULT_MODEL_PATH),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
         context_turns=settings_raw.get("context_turns", 2),
@@ -1873,7 +1878,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
 
 # --- Version check (GitHub の公開タグと比較) ---
 
-GITHUB_TAGS_URL = "https://api.github.com/repos/bluemistel/YMM4EmotionMekerKIT/tags"
+GITHUB_TAGS_URL = "https://api.github.com/repos/Rumia-Channel/YMM4EmotionMekerKIT/tags"
 DOWNLOAD_URL = "https://bluemist.booth.pm/items/8466630"
 
 
