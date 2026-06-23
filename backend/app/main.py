@@ -47,6 +47,7 @@ from .psd_loader import load_psd_tachie, reload_psd_tachie
 from .ymm4_settings import get_default_tachie_parts
 from .timing_engine import FacePlacement, compute_face_placements
 from .ymmp_parser import CharacterInfo, VoiceItem, YmmpProject
+from .emotion.base import EmotionResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -800,6 +801,11 @@ def update_settings(req: UpdateSettingsRequest):
         if new_key != config.settings.llm_api_key:
             model_changed = True
         config.settings.llm_api_key = new_key
+    if "llm_model" in s:
+        new_model_id = str(s["llm_model"] or "")
+        if new_model_id != config.settings.llm_model:
+            model_changed = True
+        config.settings.llm_model = new_model_id
     if model_changed:
         _state["analyzer"] = None
 
@@ -1130,9 +1136,38 @@ def analyze_emotions(req: AnalyzeRequest):
             return f"{v.character_name}: {v.serif}"
         return v.serif
 
-    texts = [_target_text(v) for v in voices]
-
-    results = analyzer.analyze_batch(texts, contexts)
+    if model_type.startswith("llm_"):
+        from .emotion.base import EMOTION_LABELS
+        target_emotions = [e for e in EMOTION_LABELS if e not in manual_disabled]
+        analysis_groups: list[DialogueGroup] = _state.get("groups") or []
+        if not analysis_groups:
+            analysis_groups = detect_groups(voices, gap_frames)
+        index_to_result: dict[int, EmotionResult] = {v.index: EmotionResult() for v in voices}
+        for g in analysis_groups:
+            group_voices = sorted(
+                [v for v in voices if v.index in set(g.voice_indices)],
+                key=lambda v: v.frame,
+            )
+            if not group_voices:
+                continue
+            group_personas: dict[str, dict] = {}
+            for v in group_voices:
+                cc = config.characters.get(v.character_name)
+                if cc and cc.persona_strength > 0:
+                    group_personas[v.character_name] = {
+                        "valence": cc.persona_valence,
+                        "arousal": cc.persona_arousal,
+                        "strength": cc.persona_strength,
+                    }
+            group_results = analyzer.analyze_group(
+                group_voices, group_personas, target_emotions
+            )
+            for v, r in zip(group_voices, group_results):
+                index_to_result[v.index] = r
+        results = [index_to_result[v.index] for v in voices]
+    else:
+        texts = [_target_text(v) for v in voices]
+        results = analyzer.analyze_batch(texts, contexts)
 
     # --- 感情スコアへの補正注入順（統合ポリシー） ---
     # raw(モデル出力)
@@ -1626,10 +1661,14 @@ def _get_or_create_analyzer(model_type: str, settings: Settings):
     if model_type == "local":
         from .emotion.bert_analyzer import BertEmotionAnalyzer
         analyzer = BertEmotionAnalyzer(settings.model_path, reader_weight=settings.reader_weight)
-    elif model_type in ("llm_claude", "llm_openai"):
+    elif model_type in ("llm_claude", "llm_openai", "llm_deepseek"):
         from .emotion.llm_analyzer import LlmEmotionAnalyzer
-        provider = "claude" if model_type == "llm_claude" else "openai"
-        analyzer = LlmEmotionAnalyzer(provider=provider, api_key=settings.llm_api_key or None)
+        provider = {"llm_claude": "claude", "llm_openai": "openai", "llm_deepseek": "deepseek"}[model_type]
+        analyzer = LlmEmotionAnalyzer(
+            provider=provider,
+            api_key=settings.llm_api_key or None,
+            model=settings.llm_model or None,
+        )
     else:
         raise HTTPException(400, f"Unknown model type: {model_type}")
 
@@ -1751,6 +1790,7 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "llm_model": config.settings.llm_model,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
             "compound_auto_mirror": config.settings.compound_auto_mirror,
@@ -1803,6 +1843,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        llm_model=settings_raw.get("llm_model", ""),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
         compound_auto_mirror=settings_raw.get("compound_auto_mirror", True),

@@ -21,6 +21,7 @@ const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "local", label: "ローカル (BERT・無料)" },
   { value: "llm_claude", label: "LLM — Claude (API キー必要)" },
   { value: "llm_openai", label: "LLM — OpenAI (API キー必要)" },
+  { value: "llm_deepseek", label: "LLM — DeepSeek (API キー必要)" },
 ];
 
 const DETECTABLE_EMOTIONS: { key: string; label: string }[] = [
@@ -162,6 +163,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   // 感情分析モデル
   const [emotionModel, setEmotionModel] = useState("local");
   const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmModel, setLlmModel] = useState("");
   const [modelSaving, setModelSaving] = useState(false);
   const [modelSavedMsg, setModelSavedMsg] = useState("");
   // 分析の詳細（文脈・reader ブレンド）
@@ -206,6 +208,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         const s = cfg.settings || {};
         setEmotionModel((s.emotion_model as string) || "local");
         setLlmApiKey((s.llm_api_key as string) || "");
+        setLlmModel((s.llm_model as string) || "");
         setContextTurns(typeof s.context_turns === "number" ? (s.context_turns as number) : 2);
         setSpeakerLabels(s.context_speaker_labels !== false);
         setContextGapSeconds(typeof s.context_gap_seconds === "number" ? (s.context_gap_seconds as number) : 0.4);
@@ -295,6 +298,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
       await api.updateSettings({
         emotion_model: emotionModel,
         llm_api_key: llmApiKey.trim(),
+        llm_model: llmModel.trim(),
         context_turns: contextTurns,
         context_speaker_labels: speakerLabels,
         context_gap_seconds: contextGapSeconds,
@@ -510,19 +514,35 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     </select>
                   </div>
                   {emotionModel !== "local" && (
-                    <div className="mb-2 animate-fadeIn">
-                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
-                        {emotionModel === "llm_claude" ? "Anthropic API キー" : "OpenAI API キー"}
-                      </span>
-                      <input
-                        type="password"
-                        value={llmApiKey}
-                        onChange={(e) => setLlmApiKey(e.target.value)}
-                        placeholder={emotionModel === "llm_claude" ? "sk-ant-..." : "sk-..."}
-                        className="input-field w-full"
-                        style={{ fontSize: "0.78rem", maxWidth: "420px" }}
-                        autoComplete="off"
-                      />
+                    <div className="mb-2 animate-fadeIn space-y-2">
+                      <div>
+                        <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                          LLM API キー
+                        </span>
+                        <input
+                          type="password"
+                          value={llmApiKey}
+                          onChange={(e) => setLlmApiKey(e.target.value)}
+                          placeholder="sk-..."
+                          className="input-field w-full"
+                          style={{ fontSize: "0.78rem", maxWidth: "420px" }}
+                          autoComplete="off"
+                        />
+                      </div>
+                      <div>
+                        <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                          LLM モデル ID（空欄でデフォルト）
+                        </span>
+                        <input
+                          type="text"
+                          value={llmModel}
+                          onChange={(e) => setLlmModel(e.target.value)}
+                          placeholder="claude-sonnet-4-6 / gpt-5.4-mini / deepseek-v4-flash 等"
+                          className="input-field w-full"
+                          style={{ fontSize: "0.78rem", maxWidth: "420px" }}
+                          autoComplete="off"
+                        />
+                      </div>
                     </div>
                   )}
 
