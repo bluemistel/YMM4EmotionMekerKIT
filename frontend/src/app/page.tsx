@@ -542,6 +542,25 @@ export default function Home() {
 
               {/* カラム3: 感情分析結果 + タイムライン */}
               <div className="col-span-6 overflow-y-auto pr-1 flex flex-col gap-4">
+                {flowPhase === "error" && flowMessage && (
+                  <div
+                    className="panel flex items-start justify-between gap-3"
+                    style={{ padding: "12px 14px", borderLeft: "3px solid var(--em-anger)", background: "#d2683a10" }}
+                  >
+                    <div style={{ fontSize: "0.8rem", color: "var(--text-secondary)", lineHeight: 1.7 }}>
+                      <strong style={{ color: "var(--em-anger)" }}>感情分析に失敗しました</strong>
+                      <div style={{ marginTop: "2px" }}>{flowMessage}</div>
+                    </div>
+                    <button
+                      onClick={() => { setFlowPhase("done"); setFlowMessage(""); }}
+                      className="btn-ghost"
+                      style={{ fontSize: "1rem", color: "var(--text-muted)", flexShrink: 0 }}
+                      title="閉じる"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
                 <SceneTabBar
                   scenes={scenes}
                   current={currentTimelineIndex}

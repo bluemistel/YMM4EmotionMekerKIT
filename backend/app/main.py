@@ -800,6 +800,24 @@ def update_settings(req: UpdateSettingsRequest):
         if new_key != config.settings.llm_api_key:
             model_changed = True
         config.settings.llm_api_key = new_key
+    if "llm_model_claude" in s:
+        new_m = str(s["llm_model_claude"] or "").strip()
+        if new_m and new_m != config.settings.llm_model_claude:
+            model_changed = True
+        if new_m:
+            config.settings.llm_model_claude = new_m
+    if "llm_model_openai" in s:
+        new_m = str(s["llm_model_openai"] or "").strip()
+        if new_m and new_m != config.settings.llm_model_openai:
+            model_changed = True
+        if new_m:
+            config.settings.llm_model_openai = new_m
+    if "llm_reasoning_effort" in s:
+        new_r = str(s["llm_reasoning_effort"] or "").strip()
+        if new_r and new_r != config.settings.llm_reasoning_effort:
+            model_changed = True
+        if new_r:
+            config.settings.llm_reasoning_effort = new_r
     if model_changed:
         _state["analyzer"] = None
 
@@ -1641,7 +1659,13 @@ def _get_or_create_analyzer(model_type: str, settings: Settings):
     elif model_type in ("llm_claude", "llm_openai"):
         from .emotion.llm_analyzer import LlmEmotionAnalyzer
         provider = "claude" if model_type == "llm_claude" else "openai"
-        analyzer = LlmEmotionAnalyzer(provider=provider, api_key=settings.llm_api_key or None)
+        model_id = settings.llm_model_claude if provider == "claude" else settings.llm_model_openai
+        analyzer = LlmEmotionAnalyzer(
+            provider=provider,
+            api_key=settings.llm_api_key or None,
+            model=(model_id or None),
+            reasoning_effort=settings.llm_reasoning_effort or None,
+        )
     else:
         raise HTTPException(400, f"Unknown model type: {model_type}")
 
@@ -1764,6 +1788,9 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "llm_model_claude": config.settings.llm_model_claude,
+            "llm_model_openai": config.settings.llm_model_openai,
+            "llm_reasoning_effort": config.settings.llm_reasoning_effort,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
             "compound_auto_mirror": config.settings.compound_auto_mirror,

@@ -557,7 +557,7 @@ interface ElectronAPI {
 
 /** App version shown in the settings panel when running in a plain browser
  *  (Electron reports the real packaged version via getAppVersion). */
-export const APP_VERSION_FALLBACK = "1.0.9";
+export const APP_VERSION_FALLBACK = "1.0.10";
 
 function getElectronAPI(): ElectronAPI | undefined {
   if (typeof window === "undefined") return undefined;

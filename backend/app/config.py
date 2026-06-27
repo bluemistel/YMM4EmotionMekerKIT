@@ -72,6 +72,13 @@ class Settings:
     gradient_gradual_max_delta: float = 0.15
     ymm4_exe_path: str = ""
     llm_api_key: str = ""
+    # LLM 感情分析で使うモデルID（プロバイダ別）。既定は軽量・現役モデル。
+    # 設定UIのプリセット／カスタム入力から変更でき、モデル提供終了時もここで対応できる。
+    llm_model_claude: str = "claude-haiku-4-5-20251001"
+    llm_model_openai: str = "gpt-5.4-mini"
+    # OpenAI 推論モデル（GPT-5 / o 系）の推論の深さ。none/low/medium/high/xhigh。
+    # 感情分析は軽い分類タスクのため既定は low（高速・低コスト）。gpt-4o 系では無視される。
+    llm_reasoning_effort: str = "low"
     # 個人適応学習(#1): 学習済みヘッドによる感情補正の有効化と強度。
     personalization_enabled: bool = False
     personalization_strength: float = 0.5
@@ -119,6 +126,9 @@ def load_config(path: str | Path) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        llm_model_claude=settings_raw.get("llm_model_claude", "claude-haiku-4-5-20251001"),
+        llm_model_openai=settings_raw.get("llm_model_openai", "gpt-5.4-mini"),
+        llm_reasoning_effort=settings_raw.get("llm_reasoning_effort", "low"),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
         compound_auto_mirror=settings_raw.get("compound_auto_mirror", True),
@@ -175,6 +185,9 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "gradient_gradual_max_delta": config.settings.gradient_gradual_max_delta,
             "ymm4_exe_path": config.settings.ymm4_exe_path,
             "llm_api_key": config.settings.llm_api_key,
+            "llm_model_claude": config.settings.llm_model_claude,
+            "llm_model_openai": config.settings.llm_model_openai,
+            "llm_reasoning_effort": config.settings.llm_reasoning_effort,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
             "compound_auto_mirror": config.settings.compound_auto_mirror,

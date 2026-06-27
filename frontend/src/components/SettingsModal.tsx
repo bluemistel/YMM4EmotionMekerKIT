@@ -23,6 +23,23 @@ const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "llm_openai", label: "LLM — OpenAI (API キー必要)" },
 ];
 
+// LLM 使用モデルのプリセット（軽量＝推奨/高精度）。値は API のモデルID。
+const LLM_MODEL_PRESETS: Record<"llm_claude" | "llm_openai", { value: string; label: string }[]> = {
+  llm_claude: [
+    { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5（軽量・高速・推奨）" },
+    { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5（高精度）" },
+  ],
+  llm_openai: [
+    { value: "gpt-5.4-mini", label: "GPT-5.4 mini（最新・軽量）" },
+    { value: "gpt-4o-mini", label: "GPT-4o mini（軽量・安定）" },
+    { value: "gpt-4o", label: "GPT-4o（高精度）" },
+  ],
+};
+const CUSTOM_MODEL = "__custom__";
+
+// OpenAI 推論モデル（GPT-5 / o 系）の推論の深さ。感情分析は軽い分類タスクのため low 推奨。
+const REASONING_OPTIONS = ["none", "low", "medium", "high", "xhigh"];
+
 const DETECTABLE_EMOTIONS: { key: string; label: string }[] = [
   { key: "joy", label: "喜" },
   { key: "anger", label: "怒" },
@@ -162,6 +179,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   // 感情分析モデル
   const [emotionModel, setEmotionModel] = useState("local");
   const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmModelClaude, setLlmModelClaude] = useState("claude-haiku-4-5-20251001");
+  const [llmModelOpenai, setLlmModelOpenai] = useState("gpt-5.4-mini");
+  const [llmReasoningEffort, setLlmReasoningEffort] = useState("low");
   const [modelSaving, setModelSaving] = useState(false);
   const [modelSavedMsg, setModelSavedMsg] = useState("");
   // 分析の詳細（文脈・reader ブレンド）
@@ -206,6 +226,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         const s = cfg.settings || {};
         setEmotionModel((s.emotion_model as string) || "local");
         setLlmApiKey((s.llm_api_key as string) || "");
+        if (s.llm_model_claude) setLlmModelClaude(s.llm_model_claude as string);
+        if (s.llm_model_openai) setLlmModelOpenai(s.llm_model_openai as string);
+        if (s.llm_reasoning_effort) setLlmReasoningEffort(s.llm_reasoning_effort as string);
         setContextTurns(typeof s.context_turns === "number" ? (s.context_turns as number) : 2);
         setSpeakerLabels(s.context_speaker_labels !== false);
         setContextGapSeconds(typeof s.context_gap_seconds === "number" ? (s.context_gap_seconds as number) : 0.4);
@@ -295,6 +318,9 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
       await api.updateSettings({
         emotion_model: emotionModel,
         llm_api_key: llmApiKey.trim(),
+        llm_model_claude: llmModelClaude.trim(),
+        llm_model_openai: llmModelOpenai.trim(),
+        llm_reasoning_effort: llmReasoningEffort,
         context_turns: contextTurns,
         context_speaker_labels: speakerLabels,
         context_gap_seconds: contextGapSeconds,
@@ -523,6 +549,66 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                         style={{ fontSize: "0.78rem", maxWidth: "420px" }}
                         autoComplete="off"
                       />
+                    </div>
+                  )}
+                  {(emotionModel === "llm_claude" || emotionModel === "llm_openai") && (
+                    <div className="mb-2 animate-fadeIn" style={{ maxWidth: "420px" }}>
+                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>使用モデル</span>
+                      <select
+                        value={(() => {
+                          const presets = LLM_MODEL_PRESETS[emotionModel];
+                          const cur = emotionModel === "llm_claude" ? llmModelClaude : llmModelOpenai;
+                          return presets.some((p) => p.value === cur) ? cur : CUSTOM_MODEL;
+                        })()}
+                        onChange={(e) => {
+                          if (e.target.value === CUSTOM_MODEL) return; // カスタムは下のテキストで入力
+                          if (emotionModel === "llm_claude") setLlmModelClaude(e.target.value);
+                          else setLlmModelOpenai(e.target.value);
+                        }}
+                        className="select-field w-full"
+                        style={{ fontSize: "0.8rem", marginBottom: "6px" }}
+                      >
+                        {LLM_MODEL_PRESETS[emotionModel].map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                        <option value={CUSTOM_MODEL}>カスタム（手入力）</option>
+                      </select>
+                      <input
+                        type="text"
+                        value={emotionModel === "llm_claude" ? llmModelClaude : llmModelOpenai}
+                        onChange={(e) => {
+                          if (emotionModel === "llm_claude") setLlmModelClaude(e.target.value);
+                          else setLlmModelOpenai(e.target.value);
+                        }}
+                        placeholder="モデルID"
+                        className="input-field w-full"
+                        style={{ fontSize: "0.78rem" }}
+                        autoComplete="off"
+                        spellCheck={false}
+                      />
+                      <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "4px", lineHeight: 1.6 }}>
+                        軽量モデル（Haiku / mini）は高速・低コストです。モデルIDは任意で手入力でき、提供終了時もここで変更できます。
+                      </p>
+                      {emotionModel === "llm_openai" && (
+                        <div className="mt-2">
+                          <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                            推論の深さ（Reasoning）
+                          </span>
+                          <select
+                            value={llmReasoningEffort}
+                            onChange={(e) => setLlmReasoningEffort(e.target.value)}
+                            className="select-field w-full"
+                            style={{ fontSize: "0.8rem" }}
+                          >
+                            {REASONING_OPTIONS.map((r) => (
+                              <option key={r} value={r}>{r === "low" ? "low（推奨）" : r}</option>
+                            ))}
+                          </select>
+                          <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "4px", lineHeight: 1.6 }}>
+                            GPT-5 など推論モデルでのみ有効（GPT-4o 系では無視）。感情分析は軽い判定のため <b>low</b> 推奨。深くすると精度がわずかに上がる場合がありますが、時間とトークンが増えます。
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -816,6 +902,11 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
 
                   <h3 style={h3}>更新内容</h3>
                   <div className="mb-6" style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.8 }}>
+                    <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.10</p>
+                    <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>不具合修正</strong>：Claude API での感情分析が動作しない不具合を修正</li>
+                      <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>使用モデルの選択に対応</strong>：LLM の使用モデルを選択できる機能を追加（Claude Haiku / GPT-5.4 mini 等の軽量モデル・推論の深さ選択に対応）</li>
+                    </ul>
                     <p className="mono-text" style={{ color: "var(--text-secondary)", fontWeight: 600, marginBottom: "4px" }}>v1.0.9</p>
                     <ul className="list-none space-y-1.5 mb-4" style={{ paddingLeft: 0 }}>
                       <li><Dot /><strong style={{ color: "var(--text-secondary)" }}>不具合修正</strong>：感情分析にLLM感情分析を使用すると感情分析が行われない不具合の修正</li>

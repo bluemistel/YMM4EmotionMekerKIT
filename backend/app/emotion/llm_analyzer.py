@@ -8,6 +8,12 @@ from .base import EmotionAnalyzer, EmotionResult, EMOTION_LABELS
 
 logger = logging.getLogger(__name__)
 
+# LLM API の1リクエストあたりタイムアウト（秒）と再試行回数。
+# 未設定だと SDK 既定（約10分）になり、レート制限/ネットワーク不調で
+# 「分析が終わらない」ように見えるため、明示的に短く区切る。
+LLM_TIMEOUT_SECONDS = 60.0
+LLM_MAX_RETRIES = 2
+
 SYSTEM_PROMPT = """\
 あなたは日本語テキストの感情分析エンジンです。
 与えられた台詞テキストから以下の9つの感情の強度を0.0～1.0のスコアで判定してください。
@@ -33,15 +39,28 @@ SYSTEM_PROMPT = """\
 
 
 class LlmEmotionAnalyzer(EmotionAnalyzer):
-    def __init__(self, provider: str = "claude", api_key: str | None = None, model: str | None = None):
+    def __init__(self, provider: str = "claude", api_key: str | None = None, model: str | None = None,
+                 reasoning_effort: str | None = None):
         self.provider = provider
         self.api_key = api_key
         self._client = None
+        # OpenAI 推論モデル（GPT-5 / o 系）の推論の深さ。gpt-4o 系では無視。
+        self.reasoning_effort = (reasoning_effort or "").strip() or None
 
+        # 既定は軽量・現役モデル（設定が空のときの保険。通常は設定値が渡る）。
         if provider == "claude":
-            self.model = model or "claude-sonnet-4-20250514"
+            self.model = model or "claude-haiku-4-5-20251001"
         else:
             self.model = model or "gpt-4o-mini"
+
+    def _is_openai_reasoning_model(self) -> bool:
+        """OpenAI の推論モデル（GPT-5 / o1 / o3 / o4 系）かを名前から判定する。
+
+        推論モデルは Chat Completions の引数仕様が異なる（max_completion_tokens 必須・
+        temperature 非対応・reasoning_effort 対応・推論トークンを消費）。
+        """
+        m = (self.model or "").lower()
+        return m.startswith("gpt-5") or m.startswith("o1") or m.startswith("o3") or m.startswith("o4")
 
     def _get_claude_client(self):
         if self._client is None:
@@ -56,7 +75,11 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
                     "Claude 連携ライブラリ（anthropic）が見つかりません。LLM 感情分析を使うには "
                     "`pip install anthropic` を実行してください。"
                 ) from e
-            self._client = anthropic.Anthropic(api_key=self.api_key)
+            self._client = anthropic.Anthropic(
+                api_key=self.api_key,
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
         return self._client
 
     def _get_openai_client(self):
@@ -72,7 +95,11 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
                     "OpenAI 連携ライブラリ（openai）が見つかりません。LLM 感情分析を使うには "
                     "`pip install openai` を実行してください。"
                 ) from e
-            self._client = openai.OpenAI(api_key=self.api_key)
+            self._client = openai.OpenAI(
+                api_key=self.api_key,
+                timeout=LLM_TIMEOUT_SECONDS,
+                max_retries=LLM_MAX_RETRIES,
+            )
         return self._client
 
     def _build_user_message(self, text: str, context: list[str] | None = None) -> str:
@@ -92,31 +119,65 @@ class LlmEmotionAnalyzer(EmotionAnalyzer):
         data = json.loads(content[start:end])
         return EmotionResult(**{k: float(data.get(k, 0.0)) for k in EMOTION_LABELS})
 
+    def _friendly_error(self, e: Exception) -> str:
+        """API 例外を、原因の分かる日本語メッセージに変換する。"""
+        name = type(e).__name__
+        msg = str(e)
+        low = msg.lower()
+        prov = "Claude" if self.provider == "claude" else "OpenAI"
+        if "ratelimit" in name.lower() or "429" in msg:
+            return (f"{prov} のレート制限に達しました。台詞数が多いと逐次リクエストで上限に当たりやすく、"
+                    f"分析が止まって見えることがあります。少し時間をおく／API プランのレート上限を見直す／"
+                    f"OpenAI を使う、をお試しください。（{name}）")
+        if "timeout" in name.lower() or "timed out" in low or "apiconnection" in name.lower():
+            return (f"{prov} API への接続がタイムアウトしました（応答遅延・ネットワーク不調・レート制限の可能性）。"
+                    f"（{name}）")
+        if "authentication" in name.lower() or "401" in msg or "permission" in name.lower():
+            return f"{prov} の API キーが無効、または権限がありません。設定でキーをご確認ください。（{name}）"
+        if "notfound" in name.lower() or "404" in msg:
+            return (f"{prov} のモデルID『{self.model}』が見つからない／利用できません。"
+                    f"設定 ＞ 感情分析 の「使用モデル」で別モデルをお試しください。（{name}）")
+        return f"{prov} API 呼び出しに失敗しました（{name}）: {msg}"
+
     def analyze(self, text: str, context: list[str] | None = None) -> EmotionResult:
         user_msg = self._build_user_message(text, context)
 
         if self.provider == "claude":
             client = self._get_claude_client()
-            response = client.messages.create(
-                model=self.model,
-                max_tokens=200,
-                temperature=0,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
-            )
+            try:
+                response = client.messages.create(
+                    model=self.model,
+                    max_tokens=200,
+                    temperature=0,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": user_msg}],
+                )
+            except Exception as e:
+                raise RuntimeError(self._friendly_error(e)) from e
             content = response.content[0].text
         else:
             client = self._get_openai_client()
-            response = client.chat.completions.create(
-                model=self.model,
-                max_tokens=200,
-                temperature=0,
-                response_format={"type": "json_object"},
-                messages=[
+            params: dict = {
+                "model": self.model,
+                "response_format": {"type": "json_object"},
+                "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-            )
+            }
+            if self._is_openai_reasoning_model():
+                # 推論モデル: 推論トークンも消費するため出力上限は大きめ、temperature 非対応。
+                params["max_completion_tokens"] = 4096
+                if self.reasoning_effort:
+                    params["reasoning_effort"] = self.reasoning_effort
+            else:
+                # 従来モデル(gpt-4o 系): 既存どおり max_tokens + temperature。
+                params["max_tokens"] = 256
+                params["temperature"] = 0
+            try:
+                response = client.chat.completions.create(**params)
+            except Exception as e:
+                raise RuntimeError(self._friendly_error(e)) from e
             content = response.choices[0].message.content
 
         return self._parse_response(content)
