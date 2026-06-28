@@ -5,6 +5,7 @@ const http = require("http");
 const { spawn } = require("child_process");
 const net = require("net");
 const fs = require("fs");
+const { resolvePython } = require("../scripts/resolve-python");
 
 let mainWindow = null;
 let backendProcess = null;
@@ -43,8 +44,8 @@ function getBackendExePath() {
   return path.join(dir, name);
 }
 
-function startBackend(port) {
-  return new Promise((resolve, reject) => {
+async function startBackend(port) {
+  return new Promise(async (resolve, reject) => {
     // 設定・学習データ・モデルキャッシュは書込可能なユーザー領域に固定する
     // （バンドル内は読取専用。アップデートしても引き継がれる）。
     const dataDir = path.join(app.getPath("userData"), "data");
@@ -75,8 +76,8 @@ function startBackend(port) {
       args = ["--host", "127.0.0.1", "--port", String(port)];
       cwd = getResourcePath("backend-dist");
     } else {
-      // 開発時はリポジトリの Python 環境で uvicorn を起動。
-      command = process.platform === "win32" ? "python" : "python3";
+      // 開発時は解決した Python（.venv 優先、なければ作成／フォールバック）で uvicorn を起動。
+      command = await resolvePython();
       args = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)];
       cwd = getResourcePath("backend");
     }

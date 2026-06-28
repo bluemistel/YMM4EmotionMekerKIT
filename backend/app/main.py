@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from .config import (
+    DEFAULT_MODEL_PATH,
     CharacterConfig,
     ProjectConfig,
     Settings,
@@ -47,6 +48,7 @@ from .psd_loader import load_psd_tachie, reload_psd_tachie
 from .ymm4_settings import get_default_tachie_parts
 from .timing_engine import FacePlacement, compute_face_placements
 from .ymmp_parser import CharacterInfo, VoiceItem, YmmpProject
+from .emotion.base import EmotionResult
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -812,6 +814,12 @@ def update_settings(req: UpdateSettingsRequest):
             model_changed = True
         if new_m:
             config.settings.llm_model_openai = new_m
+    if "llm_model_deepseek" in s:
+        new_m = str(s["llm_model_deepseek"] or "").strip()
+        if new_m and new_m != config.settings.llm_model_deepseek:
+            model_changed = True
+        if new_m:
+            config.settings.llm_model_deepseek = new_m
     if "llm_reasoning_effort" in s:
         new_r = str(s["llm_reasoning_effort"] or "").strip()
         if new_r and new_r != config.settings.llm_reasoning_effort:
@@ -836,6 +844,7 @@ def detect_dialogue_groups(req: DetectGroupsRequest):
     voices = project.get_voice_items(req.timeline_index)
     groups = detect_groups(voices, req.gap_threshold)
     _state["groups"] = groups
+    _state["groups_timeline_index"] = req.timeline_index
 
     return {
         "count": len(groups),
@@ -879,7 +888,8 @@ def merge_dialogue_groups(req: MergeGroupsRequest):
         raise HTTPException(400, "No project loaded")
 
     groups: list[DialogueGroup] = _state.get("groups", [])
-    voices = project.get_voice_items()
+    timeline_index = _state.get("groups_timeline_index", 0)
+    voices = project.get_voice_items(timeline_index)
     updated = merge_groups(groups, req.group_ids, voices)
     _state["groups"] = updated
 
@@ -893,7 +903,8 @@ def split_dialogue_group(req: SplitGroupRequest):
         raise HTTPException(400, "No project loaded")
 
     groups: list[DialogueGroup] = _state.get("groups", [])
-    voices = project.get_voice_items()
+    timeline_index = _state.get("groups_timeline_index", 0)
+    voices = project.get_voice_items(timeline_index)
     updated = split_group(groups, req.group_id, req.split_at_voice_index, voices)
     _state["groups"] = updated
 
@@ -961,7 +972,7 @@ def _get_embedding_analyzer():
         return cur
     from .emotion.bert_analyzer import BertEmotionAnalyzer
     config: ProjectConfig | None = _state["config"]
-    model_path = config.settings.model_path if config else "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+    model_path = config.settings.model_path if config else DEFAULT_MODEL_PATH
     analyzer = BertEmotionAnalyzer(model_path)
     # ローカルモードなら以後も再利用できるようキャッシュ。
     if config and config.settings.emotion_model == "local":
@@ -1099,6 +1110,7 @@ def load_workstate(req: WorkstateLoadRequest):
         except TypeError:
             continue
     _state["groups"] = groups
+    _state["groups_timeline_index"] = req.timeline_index
 
     info = _project_info_dict(project, req.timeline_index)
     info["has_analysis"] = bool(_state["analysis_results"])
@@ -1148,12 +1160,42 @@ def analyze_emotions(req: AnalyzeRequest):
             return f"{v.character_name}: {v.serif}"
         return v.serif
 
-    texts = [_target_text(v) for v in voices]
-
     # 感情分析の失敗（LLM のキー未設定・ライブラリ未導入・API エラー等）は、
     # 汎用 500 ではなく原因の分かるメッセージとして返す（フロントに表示される）。
     try:
-        results = analyzer.analyze_batch(texts, contexts)
+        if model_type.startswith("llm_"):
+            # LLM 経路は DialogueGroup 単位で前後文脈ごとまとめて分析する。
+            from .emotion.base import EMOTION_LABELS
+            target_emotions = [e for e in EMOTION_LABELS if e not in manual_disabled]
+            analysis_groups: list[DialogueGroup] = _state.get("groups") or []
+            if not analysis_groups:
+                analysis_groups = detect_groups(voices, gap_frames)
+            index_to_result: dict[int, EmotionResult] = {v.index: EmotionResult() for v in voices}
+            for g in analysis_groups:
+                group_voices = sorted(
+                    [v for v in voices if v.index in set(g.voice_indices)],
+                    key=lambda v: v.frame,
+                )
+                if not group_voices:
+                    continue
+                group_personas: dict[str, dict] = {}
+                for v in group_voices:
+                    cc = config.characters.get(v.character_name)
+                    if cc and cc.persona_strength > 0:
+                        group_personas[v.character_name] = {
+                            "valence": cc.persona_valence,
+                            "arousal": cc.persona_arousal,
+                            "strength": cc.persona_strength,
+                        }
+                group_results = analyzer.analyze_group(
+                    group_voices, group_personas, target_emotions
+                )
+                for v, r in zip(group_voices, group_results):
+                    index_to_result[v.index] = r
+            results = [index_to_result[v.index] for v in voices]
+        else:
+            texts = [_target_text(v) for v in voices]
+            results = analyzer.analyze_batch(texts, contexts)
     except HTTPException:
         raise
     except Exception as e:
@@ -1656,10 +1698,14 @@ def _get_or_create_analyzer(model_type: str, settings: Settings):
     if model_type == "local":
         from .emotion.bert_analyzer import BertEmotionAnalyzer
         analyzer = BertEmotionAnalyzer(settings.model_path, reader_weight=settings.reader_weight)
-    elif model_type in ("llm_claude", "llm_openai"):
+    elif model_type in ("llm_claude", "llm_openai", "llm_deepseek"):
         from .emotion.llm_analyzer import LlmEmotionAnalyzer
-        provider = "claude" if model_type == "llm_claude" else "openai"
-        model_id = settings.llm_model_claude if provider == "claude" else settings.llm_model_openai
+        provider = {"llm_claude": "claude", "llm_openai": "openai", "llm_deepseek": "deepseek"}[model_type]
+        model_id = {
+            "claude": settings.llm_model_claude,
+            "openai": settings.llm_model_openai,
+            "deepseek": settings.llm_model_deepseek,
+        }[provider]
         analyzer = LlmEmotionAnalyzer(
             provider=provider,
             api_key=settings.llm_api_key or None,
@@ -1790,6 +1836,7 @@ def _config_to_dict(config: ProjectConfig) -> dict:
             "llm_api_key": config.settings.llm_api_key,
             "llm_model_claude": config.settings.llm_model_claude,
             "llm_model_openai": config.settings.llm_model_openai,
+            "llm_model_deepseek": config.settings.llm_model_deepseek,
             "llm_reasoning_effort": config.settings.llm_reasoning_effort,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,
@@ -1822,7 +1869,7 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
     settings_raw = data.get("settings", {})
     settings = Settings(
         emotion_model=settings_raw.get("emotion_model", "local"),
-        model_path=settings_raw.get("model_path", "models/wrime-roberta"),
+        model_path=settings_raw.get("model_path", DEFAULT_MODEL_PATH),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
         context_turns=settings_raw.get("context_turns", 2),
@@ -1843,6 +1890,10 @@ def _build_config_from_dict(data: dict) -> ProjectConfig:
         gradient_gradual_max_delta=settings_raw.get("gradient_gradual_max_delta", 0.15),
         ymm4_exe_path=settings_raw.get("ymm4_exe_path", ""),
         llm_api_key=settings_raw.get("llm_api_key", ""),
+        llm_model_claude=settings_raw.get("llm_model_claude", "claude-haiku-4-5-20251001"),
+        llm_model_openai=settings_raw.get("llm_model_openai", "gpt-5.4-mini"),
+        llm_model_deepseek=settings_raw.get("llm_model_deepseek", "deepseek-v4-flash"),
+        llm_reasoning_effort=settings_raw.get("llm_reasoning_effort", "low"),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
         compound_auto_mirror=settings_raw.get("compound_auto_mirror", True),

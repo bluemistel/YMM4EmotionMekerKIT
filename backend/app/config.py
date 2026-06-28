@@ -37,10 +37,13 @@ class CharacterConfig:
         return self.emotion_presets.get("default", "")
 
 
+DEFAULT_MODEL_PATH = "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+
+
 @dataclass
 class Settings:
     emotion_model: str = "local"
-    model_path: str = "patrickramos/bert-base-japanese-v2-wrime-fine-tune"
+    model_path: str = DEFAULT_MODEL_PATH
     emotion_threshold: float = 0.3
     context_window: int = 3
     # 分析時に対象台詞の直前に含める「ターン数」（話者分離つき文脈）。
@@ -76,6 +79,7 @@ class Settings:
     # 設定UIのプリセット／カスタム入力から変更でき、モデル提供終了時もここで対応できる。
     llm_model_claude: str = "claude-haiku-4-5-20251001"
     llm_model_openai: str = "gpt-5.4-mini"
+    llm_model_deepseek: str = "deepseek-v4-flash"
     # OpenAI 推論モデル（GPT-5 / o 系）の推論の深さ。none/low/medium/high/xhigh。
     # 感情分析は軽い分類タスクのため既定は low（高速・低コスト）。gpt-4o 系では無視される。
     llm_reasoning_effort: str = "low"
@@ -105,7 +109,7 @@ def load_config(path: str | Path) -> ProjectConfig:
     settings_raw = raw.get("settings", {})
     settings = Settings(
         emotion_model=settings_raw.get("emotion_model", "local"),
-        model_path=settings_raw.get("model_path", "models/wrime-roberta"),
+        model_path=settings_raw.get("model_path", DEFAULT_MODEL_PATH),
         emotion_threshold=settings_raw.get("emotion_threshold", 0.3),
         context_window=settings_raw.get("context_window", 3),
         context_turns=settings_raw.get("context_turns", 2),
@@ -128,6 +132,7 @@ def load_config(path: str | Path) -> ProjectConfig:
         llm_api_key=settings_raw.get("llm_api_key", ""),
         llm_model_claude=settings_raw.get("llm_model_claude", "claude-haiku-4-5-20251001"),
         llm_model_openai=settings_raw.get("llm_model_openai", "gpt-5.4-mini"),
+        llm_model_deepseek=settings_raw.get("llm_model_deepseek", "deepseek-v4-flash"),
         llm_reasoning_effort=settings_raw.get("llm_reasoning_effort", "low"),
         personalization_enabled=settings_raw.get("personalization_enabled", False),
         personalization_strength=settings_raw.get("personalization_strength", 0.5),
@@ -187,6 +192,7 @@ def save_config(config: ProjectConfig, path: str | Path) -> None:
             "llm_api_key": config.settings.llm_api_key,
             "llm_model_claude": config.settings.llm_model_claude,
             "llm_model_openai": config.settings.llm_model_openai,
+            "llm_model_deepseek": config.settings.llm_model_deepseek,
             "llm_reasoning_effort": config.settings.llm_reasoning_effort,
             "personalization_enabled": config.settings.personalization_enabled,
             "personalization_strength": config.settings.personalization_strength,

@@ -21,10 +21,11 @@ const MODEL_OPTIONS: { value: string; label: string }[] = [
   { value: "local", label: "ローカル (BERT・無料)" },
   { value: "llm_claude", label: "LLM — Claude (API キー必要)" },
   { value: "llm_openai", label: "LLM — OpenAI (API キー必要)" },
+  { value: "llm_deepseek", label: "LLM — DeepSeek (API キー必要)" },
 ];
 
 // LLM 使用モデルのプリセット（軽量＝推奨/高精度）。値は API のモデルID。
-const LLM_MODEL_PRESETS: Record<"llm_claude" | "llm_openai", { value: string; label: string }[]> = {
+const LLM_MODEL_PRESETS: Record<"llm_claude" | "llm_openai" | "llm_deepseek", { value: string; label: string }[]> = {
   llm_claude: [
     { value: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5（軽量・高速・推奨）" },
     { value: "claude-sonnet-4-5-20250929", label: "Claude Sonnet 4.5（高精度）" },
@@ -33,6 +34,10 @@ const LLM_MODEL_PRESETS: Record<"llm_claude" | "llm_openai", { value: string; la
     { value: "gpt-5.4-mini", label: "GPT-5.4 mini（最新・軽量）" },
     { value: "gpt-4o-mini", label: "GPT-4o mini（軽量・安定）" },
     { value: "gpt-4o", label: "GPT-4o（高精度）" },
+  ],
+  llm_deepseek: [
+    { value: "deepseek-v4-flash", label: "DeepSeek V4 Flash（軽量・高速・推奨）" },
+    { value: "deepseek-chat", label: "DeepSeek Chat（汎用）" },
   ],
 };
 const CUSTOM_MODEL = "__custom__";
@@ -181,6 +186,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
   const [llmApiKey, setLlmApiKey] = useState("");
   const [llmModelClaude, setLlmModelClaude] = useState("claude-haiku-4-5-20251001");
   const [llmModelOpenai, setLlmModelOpenai] = useState("gpt-5.4-mini");
+  const [llmModelDeepseek, setLlmModelDeepseek] = useState("deepseek-v4-flash");
   const [llmReasoningEffort, setLlmReasoningEffort] = useState("low");
   const [modelSaving, setModelSaving] = useState(false);
   const [modelSavedMsg, setModelSavedMsg] = useState("");
@@ -228,6 +234,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         setLlmApiKey((s.llm_api_key as string) || "");
         if (s.llm_model_claude) setLlmModelClaude(s.llm_model_claude as string);
         if (s.llm_model_openai) setLlmModelOpenai(s.llm_model_openai as string);
+        if (s.llm_model_deepseek) setLlmModelDeepseek(s.llm_model_deepseek as string);
         if (s.llm_reasoning_effort) setLlmReasoningEffort(s.llm_reasoning_effort as string);
         setContextTurns(typeof s.context_turns === "number" ? (s.context_turns as number) : 2);
         setSpeakerLabels(s.context_speaker_labels !== false);
@@ -311,6 +318,18 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
     });
   }
 
+  // プロバイダ別「使用モデル」の現在値と更新を一元化する小ヘルパー。
+  function llmModelFor(provider: string): string {
+    if (provider === "llm_claude") return llmModelClaude;
+    if (provider === "llm_deepseek") return llmModelDeepseek;
+    return llmModelOpenai;
+  }
+  function setLlmModelFor(provider: string, value: string) {
+    if (provider === "llm_claude") setLlmModelClaude(value);
+    else if (provider === "llm_deepseek") setLlmModelDeepseek(value);
+    else setLlmModelOpenai(value);
+  }
+
   async function handleSaveModel() {
     setModelSaving(true);
     setModelSavedMsg("");
@@ -320,6 +339,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
         llm_api_key: llmApiKey.trim(),
         llm_model_claude: llmModelClaude.trim(),
         llm_model_openai: llmModelOpenai.trim(),
+        llm_model_deepseek: llmModelDeepseek.trim(),
         llm_reasoning_effort: llmReasoningEffort,
         context_turns: contextTurns,
         context_speaker_labels: speakerLabels,
@@ -536,34 +556,35 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                     </select>
                   </div>
                   {emotionModel !== "local" && (
-                    <div className="mb-2 animate-fadeIn">
-                      <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
-                        {emotionModel === "llm_claude" ? "Anthropic API キー" : "OpenAI API キー"}
-                      </span>
-                      <input
-                        type="password"
-                        value={llmApiKey}
-                        onChange={(e) => setLlmApiKey(e.target.value)}
-                        placeholder={emotionModel === "llm_claude" ? "sk-ant-..." : "sk-..."}
-                        className="input-field w-full"
-                        style={{ fontSize: "0.78rem", maxWidth: "420px" }}
-                        autoComplete="off"
-                      />
+                    <div className="mb-2 animate-fadeIn space-y-2">
+                      <div>
+                        <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>
+                          LLM API キー
+                        </span>
+                        <input
+                          type="password"
+                          value={llmApiKey}
+                          onChange={(e) => setLlmApiKey(e.target.value)}
+                          placeholder="sk-..."
+                          className="input-field w-full"
+                          style={{ fontSize: "0.78rem", maxWidth: "420px" }}
+                          autoComplete="off"
+                        />
+                      </div>
                     </div>
                   )}
-                  {(emotionModel === "llm_claude" || emotionModel === "llm_openai") && (
+                  {(emotionModel === "llm_claude" || emotionModel === "llm_openai" || emotionModel === "llm_deepseek") && (
                     <div className="mb-2 animate-fadeIn" style={{ maxWidth: "420px" }}>
                       <span className="label-text" style={{ display: "block", marginBottom: "4px" }}>使用モデル</span>
                       <select
                         value={(() => {
                           const presets = LLM_MODEL_PRESETS[emotionModel];
-                          const cur = emotionModel === "llm_claude" ? llmModelClaude : llmModelOpenai;
+                          const cur = llmModelFor(emotionModel);
                           return presets.some((p) => p.value === cur) ? cur : CUSTOM_MODEL;
                         })()}
                         onChange={(e) => {
                           if (e.target.value === CUSTOM_MODEL) return; // カスタムは下のテキストで入力
-                          if (emotionModel === "llm_claude") setLlmModelClaude(e.target.value);
-                          else setLlmModelOpenai(e.target.value);
+                          setLlmModelFor(emotionModel, e.target.value);
                         }}
                         className="select-field w-full"
                         style={{ fontSize: "0.8rem", marginBottom: "6px" }}
@@ -575,11 +596,8 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                       </select>
                       <input
                         type="text"
-                        value={emotionModel === "llm_claude" ? llmModelClaude : llmModelOpenai}
-                        onChange={(e) => {
-                          if (emotionModel === "llm_claude") setLlmModelClaude(e.target.value);
-                          else setLlmModelOpenai(e.target.value);
-                        }}
+                        value={llmModelFor(emotionModel)}
+                        onChange={(e) => setLlmModelFor(emotionModel, e.target.value)}
                         placeholder="モデルID"
                         className="input-field w-full"
                         style={{ fontSize: "0.78rem" }}
@@ -587,7 +605,7 @@ export default function SettingsModal({ exePath, onExePathChange }: Props) {
                         spellCheck={false}
                       />
                       <p style={{ fontSize: "0.7rem", color: "var(--text-faint)", marginTop: "4px", lineHeight: 1.6 }}>
-                        軽量モデル（Haiku / mini）は高速・低コストです。モデルIDは任意で手入力でき、提供終了時もここで変更できます。
+                        軽量モデル（Haiku / mini / Flash）は高速・低コストです。モデルIDは任意で手入力でき、提供終了時もここで変更できます。
                       </p>
                       {emotionModel === "llm_openai" && (
                         <div className="mt-2">

@@ -182,7 +182,7 @@ def _load_head():
     if _cache["mtime"] == mtime and _cache["model"] is not None:
         return _cache["model"], _cache["meta"]
     try:
-        blob = torch.load(path, map_location="cpu")
+        blob = torch.load(path, map_location="cpu", weights_only=False)
         # 旧 head.pt は arch キーを持たない → linear として再構築（後方互換）。
         model = PersonalizationHead(
             int(blob["input_dim"]),
