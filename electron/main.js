@@ -5,7 +5,6 @@ const http = require("http");
 const { spawn } = require("child_process");
 const net = require("net");
 const fs = require("fs");
-const { resolvePython } = require("../scripts/resolve-python");
 
 let mainWindow = null;
 let backendProcess = null;
@@ -77,6 +76,10 @@ async function startBackend(port) {
       cwd = getResourcePath("backend-dist");
     } else {
       // 開発時は解決した Python（.venv 優先、なければ作成／フォールバック）で uvicorn を起動。
+      // resolve-python は開発時のみ必要。配布版(app.asar)には scripts/ を含めないため、
+      // ここで遅延 require する（トップレベルで require すると本番起動時に
+      // 「Cannot find module '../scripts/resolve-python'」で落ちる）。
+      const { resolvePython } = require("../scripts/resolve-python");
       command = await resolvePython();
       args = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)];
       cwd = getResourcePath("backend");
