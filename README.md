@@ -153,6 +153,10 @@ YMM4EmotionMekerKIT/
 
 ## 更新履歴
 
+### v1.0.11
+- LLM での感情分析を文脈単位で行うように改修
+- LLM の使用モデルの選択に DeepSeek (v4:デフォルト / Flash) を追加
+
 ### v1.0.10
 - Claude API での感情分析が動作しない不具合を修正
 - LLM の使用モデルを選択できる機能を追加（Claude Haiku / GPT-5.4 mini 等の軽量モデル・推論の深さ選択に対応）
